@@ -1,4 +1,5 @@
-﻿using VideoAutoTool.Core.Cache;
+﻿using System.Collections.Concurrent;
+using VideoAutoTool.Core.Cache;
 using VideoAutoTool.Core.Ffmpeg;
 using VideoAutoTool.Core.Fonts;
 using VideoAutoTool.Core.Planning;
@@ -15,7 +16,7 @@ public sealed class JobRenderer
     private readonly EncoderSelector _encoderSelector;
     private readonly IFontCatalog _fontCatalog;
     private readonly PreparedAssetService? _assetService;
-    private static readonly SemaphoreSlim CachePrepareLock = new(1, 1);
+    private static readonly ConcurrentDictionary<string, MediaInfo> ProbeCache = new(StringComparer.OrdinalIgnoreCase);
 
     public JobRenderer(
         FfmpegRunner runner,
@@ -58,12 +59,12 @@ public sealed class JobRenderer
             MediaInfo? waveInfo = null;
             if (job.AvatarPath is not null)
             {
-                avatarInfo = await _probe.ProbeAsync(job.AvatarPath, cancellationToken).ConfigureAwait(false);
+                avatarInfo = await ProbeCachedAsync(job.AvatarPath, cancellationToken).ConfigureAwait(false);
             }
 
             if (job.WavePath is not null)
             {
-                waveInfo = await _probe.ProbeAsync(job.WavePath, cancellationToken).ConfigureAwait(false);
+                waveInfo = await ProbeCachedAsync(job.WavePath, cancellationToken).ConfigureAwait(false);
             }
 
             if (job.SubPath is not null)
@@ -79,24 +80,23 @@ public sealed class JobRenderer
             List<string> args;
             if (useCache && _assetService is not null)
             {
-                await CachePrepareLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-                List<string> cachedBackgrounds;
-                try
-                {
-                    cachedBackgrounds = await _assetService.PrepareBackgroundsAsync(
-                        template,
-                        job,
-                        encode.Encoder,
-                        encode.HwAccel,
-                        progress: null,
-                        cancellationToken: cancellationToken).ConfigureAwait(false);
-                }
-                finally
-                {
-                    CachePrepareLock.Release();
-                }
+                var assetService = _assetService;
+                List<string>? cachedBackgrounds = null;
+                await AssetPrepareGate.RunAsync(
+                    job.Backgrounds.Select(s => s.File),
+                    async () =>
+                    {
+                        cachedBackgrounds = await assetService.PrepareBackgroundsAsync(
+                            template,
+                            job,
+                            encode.Encoder,
+                            encode.HwAccel,
+                            progress: null,
+                            cancellationToken: cancellationToken).ConfigureAwait(false);
+                    },
+                    cancellationToken).ConfigureAwait(false);
 
-                concatListPath = ConcatListBuilder.Create(cachedBackgrounds, tempDir);
+                concatListPath = ConcatListBuilder.Create(cachedBackgrounds!, tempDir);
 
                 var graph = FilterGraphBuilder.BuildCached(template, job, concatListPath, avatarInfo, waveInfo, job.SubPath is not null);
 
@@ -178,5 +178,17 @@ public sealed class JobRenderer
                 // Best effort cleanup.
             }
         }
+    }
+
+    private async Task<MediaInfo> ProbeCachedAsync(string path, CancellationToken cancellationToken)
+    {
+        if (ProbeCache.TryGetValue(path, out var cached))
+        {
+            return cached;
+        }
+
+        var info = await _probe.ProbeAsync(path, cancellationToken).ConfigureAwait(false);
+        ProbeCache[path] = info;
+        return info;
     }
 }

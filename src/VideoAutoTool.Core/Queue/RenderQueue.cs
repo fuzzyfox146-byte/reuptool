@@ -260,20 +260,21 @@ public sealed class RenderQueue : IDisposable
 
             await _runner.RenderAsync(job, _template, plan, cancellationToken, progress).ConfigureAwait(false);
 
-            UpdateJobStatus(job, JobStatus.Done);
             job.Progress = 1.0;
             job.FinishedAt = DateTime.UtcNow;
+            UpdateJobStatus(job, JobStatus.Done);
         }
         catch (OperationCanceledException)
         {
             UpdateJobStatus(job, JobStatus.Cancelled);
+            job.FinishedAt ??= DateTime.UtcNow;
         }
         catch (Exception ex)
         {
-            UpdateJobStatus(job, JobStatus.Failed);
             job.ErrorMessage = FlattenMessages(ex);
             job.LogTail = ex.ToString();
             job.FinishedAt = DateTime.UtcNow;
+            UpdateJobStatus(job, JobStatus.Failed);
         }
         finally
         {

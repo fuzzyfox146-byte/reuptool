@@ -300,7 +300,7 @@
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
-                                    <DataGridTextColumn Header="Status" Binding="{Binding StatusShort}" Width="110"/>
+                                    <DataGridTextColumn Header="Status" Binding="{Binding StatusShort}" Width="160"/>
                                 </DataGrid.Columns>
                             </DataGrid>
                         </DockPanel>

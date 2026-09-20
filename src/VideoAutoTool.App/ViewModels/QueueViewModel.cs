@@ -266,7 +266,11 @@ public sealed partial class QueueViewModel : ObservableObject
                 row.Apply(job);
             }
 
-            AppendLog($"#{job.JobIndex} {job.Status}: {Path.GetFileName(job.OutputPath)}");
+            var elapsed = RenderTiming.Elapsed(job.StartedAt, job.FinishedAt);
+            var timing = elapsed is { } took
+                ? " — " + RenderTiming.Describe(took, job.DurationSeconds)
+                : "";
+            AppendLog($"#{job.JobIndex} {row.StatusShort}: {Path.GetFileName(job.OutputPath)}{timing}");
             if (!string.IsNullOrWhiteSpace(job.ErrorMessage))
             {
                 AppendLog($"  {job.ErrorMessage}");

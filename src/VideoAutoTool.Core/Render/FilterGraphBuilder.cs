@@ -95,11 +95,8 @@ public static class FilterGraphBuilder
         var inputIndex = 2;
 
         // Input 0: driver audio
-        // Input 1: concat demuxer (already canvas-sized when cache is current; still cover-fit 1.0).
-        filters.Add($"color=c=black:s={canvas.Width}x{canvas.Height}:r={canvas.Fps}:d={job.DurationSeconds:0.###},format=gbrp[base]");
-        var cover = CoverScaleExpr(canvas, scale: 1.0);
-        filters.Add($"[1:v]fps={canvas.Fps},trim=duration={job.DurationSeconds:0.###},setpts=PTS-STARTPTS,scale={cover}:flags=bicubic,crop=w='min(iw,{canvas.Width})':h='min(ih,{canvas.Height})',pad={canvas.Width}:{canvas.Height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,format=rgba[bga]");
-        filters.Add("[base][bga]overlay=eof_action=repeat:format=gbrp[L1]");
+        // Input 1: concat of backgrounds already prepared at canvas size + opacity.
+        filters.Add($"[1:v]fps={canvas.Fps},trim=duration={job.DurationSeconds:0.###},setpts=PTS-STARTPTS,setsar=1,format=gbrp[L1]");
         var current = "[L1]";
         AppendOverlays(
             filters,

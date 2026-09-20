@@ -25,7 +25,7 @@ public static class RenderCommandBuilder
         {
             "-y", "-hide_banner", "-loglevel", "warning", "-nostdin"
         };
-        AddMediaInput(args, driverPath, encode.HwAccel, loopImage: false, loopWave: false, fps: 0);
+        AddMediaInput(args, driverPath, hwAccel: null, loopImage: false, loopWave: false, fps: 0);
 
         foreach (var input in graph.ExtraInputs)
         {
@@ -126,7 +126,15 @@ public static class RenderCommandBuilder
     {
         if (encoder == VideoEncoderKind.H264Nvenc)
         {
-            args.AddRange(["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", quality.ToString(), "-b:v", "0", "-profile:v", "high"]);
+            args.AddRange([
+                "-c:v", "h264_nvenc",
+                "-preset", "p1",
+                "-tune", "hq",
+                "-rc", "vbr",
+                "-cq", quality.ToString(),
+                "-b:v", "0",
+                "-profile:v", "high"
+            ]);
         }
         else
         {
@@ -136,8 +144,6 @@ public static class RenderCommandBuilder
 
     public static void AppendOutputSize(List<string> args, CanvasSettings canvas)
     {
-        args.Add("-s");
-        args.Add($"{canvas.Width}x{canvas.Height}");
         args.Add("-r");
         args.Add(canvas.Fps.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }

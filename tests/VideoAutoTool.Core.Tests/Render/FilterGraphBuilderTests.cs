@@ -36,8 +36,9 @@ public class FilterGraphBuilderTests
         var job = CreateJob(template, avatar: null, wave: null, sub: null);
         var graph = FilterGraphBuilder.BuildCached(template, job, @"D:\tmp\list.txt", null, null, includeSubtitles: false);
 
-        Assert.Contains("pad=1280:720", graph.FilterComplex);
-        Assert.Contains("1280x720", graph.FilterComplex);
+        Assert.Contains("[1:v]fps=", graph.FilterComplex);
+        Assert.Contains("format=gbrp[L1]", graph.FilterComplex);
+        Assert.DoesNotContain("pad=1280:720", graph.FilterComplex);
     }
 
     private static RenderJobPlan CreateJob(Template template, string? avatar, string? wave, string? sub) =>

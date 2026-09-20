@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using VideoAutoTool.Core.Queue;
+using VideoAutoTool.Core.Render;
 
 namespace VideoAutoTool.App.ViewModels;
 
@@ -64,8 +65,8 @@ public sealed partial class QueueJobRowViewModel : ObservableObject
         {
             JobStatus.Pending => "Chờ",
             JobStatus.Running => $"Đang encode {job.Progress:P0}",
-            JobStatus.Done => "Xong",
-            JobStatus.Failed => "Lỗi",
+            JobStatus.Done => DoneLabel(job),
+            JobStatus.Failed => FailedLabel(job),
             JobStatus.Cancelled => "Đã hủy",
             JobStatus.Skipped => "Bỏ qua",
             _ => job.Status.ToString()
@@ -104,6 +105,12 @@ public sealed partial class QueueJobRowViewModel : ObservableObject
             $"Thời lượng: {job.DurationSeconds:0.##}s"
         };
 
+        var elapsed = RenderTiming.Elapsed(job.StartedAt, job.FinishedAt);
+        if (elapsed is { } took)
+        {
+            lines.Add($"Render: {RenderTiming.Describe(took, job.DurationSeconds)}");
+        }
+
         if (!string.IsNullOrWhiteSpace(ErrorFull))
         {
             lines.Add("");
@@ -119,5 +126,17 @@ public sealed partial class QueueJobRowViewModel : ObservableObject
         }
 
         return string.Join(Environment.NewLine, lines);
+    }
+
+    private static string DoneLabel(RenderJobItem job)
+    {
+        var elapsed = RenderTiming.Elapsed(job.StartedAt, job.FinishedAt);
+        return elapsed is { } took ? $"Xong · {RenderTiming.FormatElapsed(took)}" : "Xong";
+    }
+
+    private static string FailedLabel(RenderJobItem job)
+    {
+        var elapsed = RenderTiming.Elapsed(job.StartedAt, job.FinishedAt);
+        return elapsed is { } took ? $"Lỗi · {RenderTiming.FormatElapsed(took)}" : "Lỗi";
     }
 }

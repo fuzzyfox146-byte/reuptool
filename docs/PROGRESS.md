@@ -1,22 +1,24 @@
 # PROGRESS - handoff log (agent: read first, update at the end of every task)
 
 ## Current state
-- Milestone: **settings scale + parallel 2 + larger ASS** (Version **1.0.17**).
-- Git: visual-fix 1.0.16 still **uncommitted**, this continues on that tree.
+- Milestone: **render speed + per-job timing** (Version **1.0.18**).
+- Git: `a5e660f` on origin/main is 1.0.17. This speed work is **uncommitted**.
 
 ## Done
-- Settings: background scale 100–250% (default 150), applied at render (cache key includes scale).
-- Settings: parallel combo actually binds (was ComboBoxItem vs int). Default **2**. Cache prep serialized so 2 jobs don't race.
-- Subtitles: ASS `\fs` + color override; font size = max(Cỡ, 36% chiều cao hộp Sub). Default Cỡ 72. Preview canvas follows that size.
-- CPU: dropped extra `scale=W:H` after overlays (encode still NVENC). Overlay/ASS remain CPU by design.
+- Per-file cache lock so two jobs with different backgrounds prepare in parallel (global lock was making the queue look 1-by-1).
+- Cached graph uses prepared 720p clip directly (no second cover/pad/overlay of the background).
+- NVENC `p1` + skip extra `-s` scaler; probe avatar/wave once; no CUDA decode of the audio driver.
+- Queue log + status + chi tiết job: thời gian render từng video; đồng hồ tổng vẫn còn.
 
 ## Decisions
-- Do not change avatar/soundwave layout.
-- Two concurrent NVENC encodes on RTX 5060; cache prepare is one-at-a-time then both encode.
+- Do not change design / avatar / wave layout.
+- Full CUDA overlay_cuda+ASS is not used: libass and PNG alpha stay on CPU; ffmpeg 7 CUDA overlay graphs can stall.
+- GPU still does NVENC encode + CUDA decode of cached backgrounds.
 
 ## Open issues / risks
-- Saved session ParallelCount=1 still restores to 1 until user picks 2 in Cài đặt.
-- NVENC dual-session not integration-tested here.
+- First pass of a new background still spends NVENC on cache; later jobs of the same clip are faster.
+- Output on HDD (ổ D) can cap speed regardless of GPU.
 
 ## Next step
-- Đã publish lại 1.0.17: `publish\VideoAutoTool.App.exe`. Chạy file này (đóng bản cũ nếu còn mở).
+- Tool cat N giay dau background: `scripts\CatDauBackground.cmd` (keo tha folder) hoac `pwsh scripts\trim-background-start.ps1 -Folder "D:\bg" -Seconds 3`.
+- App 1.0.18 van o `publish-1.0.18\VideoAutoTool.App.exe` neu hang doi cu dang khoa `publish\`.

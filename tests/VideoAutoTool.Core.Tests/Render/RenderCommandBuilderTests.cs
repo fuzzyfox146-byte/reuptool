@@ -32,12 +32,16 @@ public class RenderCommandBuilderTests
             template, job, graph, driver, output, encode, new RenderRequest(RenderMode.Clip, 8));
 
         Assert.Contains("h264_nvenc", args);
+        Assert.Contains("p1", args);
         Assert.Contains("cuda", args);
-        Assert.Contains("1280x720", args);
         Assert.DoesNotContain("libx264", args);
+        Assert.DoesNotContain("1280x720", args);
         var firstInput = args.IndexOf("-i");
         Assert.True(firstInput > 0);
-        Assert.Equal("-hwaccel", args[firstInput - 2]);
-        Assert.Equal("cuda", args[firstInput - 1]);
+        Assert.NotEqual("-hwaccel", args[firstInput - 2]);
+        var extraInput = args.IndexOf("-i", firstInput + 1);
+        Assert.True(extraInput > 0);
+        Assert.Equal("-hwaccel", args[extraInput - 2]);
+        Assert.Equal("cuda", args[extraInput - 1]);
     }
 }
