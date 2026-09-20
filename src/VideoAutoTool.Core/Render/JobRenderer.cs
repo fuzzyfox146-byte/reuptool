@@ -73,7 +73,7 @@ public sealed class JobRenderer
             }
 
             var preferNvenc = template.Output.Encoder is OutputEncoder.Auto or OutputEncoder.Nvenc;
-            var encoder = await _encoderSelector.SelectAsync(preferNvenc, cancellationToken).ConfigureAwait(false);
+            var encode = await _encoderSelector.SelectAsync(preferNvenc, cancellationToken).ConfigureAwait(false);
 
             List<string> args;
             if (useCache && _assetService is not null)
@@ -81,6 +81,8 @@ public sealed class JobRenderer
                 var cachedBackgrounds = await _assetService.PrepareBackgroundsAsync(
                     template,
                     job,
+                    encode.Encoder,
+                    encode.HwAccel,
                     progress: null,
                     cancellationToken: cancellationToken).ConfigureAwait(false);
 
@@ -95,7 +97,7 @@ public sealed class JobRenderer
                     job.DriverPath,
                     concatListPath,
                     partPath,
-                    encoder,
+                    encode,
                     request);
             }
             else
@@ -109,14 +111,15 @@ public sealed class JobRenderer
                         graph,
                         job.DriverPath,
                         partPath,
-                        request.FrameTimeSeconds ?? 0)
+                        request.FrameTimeSeconds ?? 0,
+                        encode)
                     : RenderCommandBuilder.BuildArguments(
                         template,
                         job,
                         graph,
                         job.DriverPath,
                         partPath,
-                        encoder,
+                        encode,
                         request);
             }
 

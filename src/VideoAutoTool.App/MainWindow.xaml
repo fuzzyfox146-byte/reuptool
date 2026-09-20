@@ -6,8 +6,10 @@
         xmlns:controls="clr-namespace:VideoAutoTool.App.Controls"
         mc:Ignorable="d"
         Title="{Binding Title}" Height="720" Width="1280"
-        WindowStartupLocation="CenterScreen">
+        WindowStartupLocation="CenterScreen"
+        Closing="OnWindowClosing">
     <Window.InputBindings>
+        <KeyBinding Modifiers="Control" Key="S" Command="{Binding SaveAllCommand}"/>
         <KeyBinding Modifiers="Control" Key="Z" Command="{Binding DesignViewModel.UndoCommand}"/>
         <KeyBinding Modifiers="Control+Shift" Key="Z" Command="{Binding DesignViewModel.RedoCommand}"/>
         <KeyBinding Modifiers="Control" Key="Y" Command="{Binding DesignViewModel.RedoCommand}"/>
@@ -35,8 +37,12 @@
                                     <Button Grid.Column="0" Content="↶ Hoàn tác" Command="{Binding DesignViewModel.UndoCommand}" Margin="0,0,2,0" ToolTip="Ctrl+Z"/>
                                     <Button Grid.Column="1" Content="↷ Làm lại" Command="{Binding DesignViewModel.RedoCommand}" Margin="2,0,0,0" ToolTip="Ctrl+Shift+Z"/>
                                 </Grid>
-                                <Button Content="💾 Lưu Draft" Command="{Binding DesignViewModel.SaveDraftCommand}" Margin="0,5"/>
-                                <Button Content="📂 Tải Draft" Command="{Binding DesignViewModel.LoadDraftCommand}" Margin="0,5"/>
+                                <Button Content="💾 Lưu bản mới" Command="{Binding DesignViewModel.SaveDraftCommand}" Margin="0,5"
+                                        ToolTip="Tạo file JSON design mới (không ghi đè). Ctrl+S lưu toàn bộ phiên hiện tại."/>
+                                <Button Content="Ctrl+S Lưu tất cả" Command="{Binding SaveAllCommand}" Margin="0,5"
+                                        ToolTip="Lưu design hiện tại + folder nguồn + cài đặt. Ghi đè file design đang mở."/>
+                                <Button Content="📂 Mở bản cũ" Command="{Binding DesignViewModel.LoadDraftCommand}" Margin="0,5"
+                                        ToolTip="Mở lại một file JSON đã lưu."/>
                             </StackPanel>
                             <StackPanel>
                                 <!-- Legend for checkboxes -->
@@ -175,13 +181,18 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                         <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="180"/>
+                        <RowDefinition Height="140"/>
                     </Grid.RowDefinitions>
 
                     <StackPanel Grid.Row="0">
                         <TextBlock Text="Nguồn &amp; Kiểm tra" FontSize="20" FontWeight="Bold" Margin="0,0,0,12"/>
-                        <TextBlock Text="Chọn thư mục gốc bằng Duyệt. Tool chỉ liệt kê folder theo vai trò render, đếm file tầng trên — không đọc hết nội dung bên trong."
+                        <TextBlock Text="Chọn template design để render, duyệt folder, rồi Render thử (clip ~8s job đầu) hoặc Render thật (cả hàng đợi)."
                                    TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,8"/>
+                        <TextBlock Text="Template design" FontWeight="Bold" Margin="0,0,0,4"/>
+                        <ComboBox ItemsSource="{Binding SourceViewModel.DesignOptions}"
+                                  SelectedItem="{Binding SourceViewModel.SelectedDesign}"
+                                  DisplayMemberPath="DisplayName"
+                                  Margin="0,0,0,8"/>
                         <Grid Margin="0,0,0,8">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
@@ -196,8 +207,14 @@
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                             <Button Content="Quét folder" Margin="0,0,8,0"
                                     Command="{Binding SourceViewModel.RefreshFolderStatsCommand}"/>
-                            <Button Content="Kiểm tra sâu (ffprobe)"
+                            <Button Content="Kiểm tra sâu (ffprobe)" Margin="0,0,16,0"
                                     Command="{Binding SourceViewModel.ValidateDeepCommand}"/>
+                            <Button Content="Render thử" Margin="0,0,8,0"
+                                    Command="{Binding SourceViewModel.TestRenderCommand}"
+                                    ToolTip="Encode ~8 giây job đầu tiên (file *_test.mp4)."/>
+                            <Button Content="Render thật"
+                                    Command="{Binding SourceViewModel.RenderAllCommand}"
+                                    ToolTip="Chạy toàn bộ job Full vào hàng đợi."/>
                         </StackPanel>
                         <TextBlock Text="{Binding SourceViewModel.Status}" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,12"/>
                     </StackPanel>
@@ -235,16 +252,93 @@
 
             <!-- Tab Hàng đợi -->
             <TabItem Header="Hàng đợi">
-                <Grid Margin="16">
-                    <StackPanel>
-                        <TextBlock Text="Hàng đợi Render" FontSize="20" FontWeight="Bold" Margin="0,0,0,16"/>
-                        <TextBlock Text="{Binding QueueViewModel.JobCount, StringFormat='Số job: {0}'}" Margin="0,0,0,16"/>
-                        <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
-                            <Button Content="Chạy" Margin="0,0,8,0"/>
-                            <Button Content="Tạm dừng" Margin="0,0,8,0"/>
-                            <Button Content="Hủy" Background="{StaticResource ErrorBrush}"/>
-                        </StackPanel>
-                    </StackPanel>
+                <Grid Margin="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="240"/>
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Padding="8">
+                        <DockPanel>
+                            <Grid DockPanel.Dock="Top" Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Content="Tạm dừng" Margin="0,0,8,0"
+                                            Command="{Binding QueueViewModel.PauseCommand}"/>
+                                    <Button Content="Tiếp tục" Margin="0,0,8,0"
+                                            Command="{Binding QueueViewModel.ResumeCommand}"/>
+                                    <Button Content="Hủy" Background="{StaticResource ErrorBrush}"
+                                            Command="{Binding QueueViewModel.CancelCommand}"/>
+                                </StackPanel>
+                                <TextBlock Grid.Column="1" VerticalAlignment="Center" Margin="16,0"
+                                           Text="{Binding QueueViewModel.ElapsedText, StringFormat='Thời gian encode: {0}'}"/>
+                                <TextBlock Grid.Column="2" VerticalAlignment="Center"
+                                           Text="{Binding QueueViewModel.EncoderLabel}"/>
+                            </Grid>
+                            <ProgressBar DockPanel.Dock="Bottom" Height="8" Margin="0,8,0,0"
+                                         Minimum="0" Maximum="1"
+                                         Value="{Binding QueueViewModel.OverallProgress}"/>
+                            <DataGrid ItemsSource="{Binding QueueViewModel.Jobs}"
+                                      SelectedItem="{Binding QueueViewModel.SelectedJob}"
+                                      AutoGenerateColumns="False" IsReadOnly="True"
+                                      HeadersVisibility="Column"
+                                      SelectionMode="Single">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Format" Binding="{Binding Format}" Width="70"/>
+                                    <DataGridTextColumn Header="Preset" Binding="{Binding Preset}" Width="70"/>
+                                    <DataGridTemplateColumn Header="Output File" Width="220">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding OutputShort}"
+                                                           ToolTip="{Binding OutputFile}"
+                                                           TextTrimming="CharacterEllipsis"/>
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn Header="Status" Binding="{Binding StatusShort}" Width="110"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </DockPanel>
+                    </Border>
+
+                    <DockPanel Grid.Row="1" Margin="0,8,0,4">
+                        <Button DockPanel.Dock="Right" Content="Copy lỗi / chi tiết"
+                                Command="{Binding QueueViewModel.CopySelectedDetailsCommand}"
+                                Padding="10,2" Margin="8,0,0,0"
+                                ToolTip="Copy toàn bộ trạng thái, đường dẫn và lỗi ffmpeg của job đang chọn."/>
+                        <TextBlock Text="Encoding" FontWeight="Bold"/>
+                        <TextBlock Margin="12,0,0,0" Foreground="{StaticResource TextSecondaryBrush}"
+                                   Text="{Binding QueueViewModel.Status}"/>
+                    </DockPanel>
+                    <Grid Grid.Row="2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="8"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <DockPanel Grid.Column="0">
+                            <TextBlock DockPanel.Dock="Top" Text="Chi tiết job đã chọn" FontWeight="Bold" Margin="0,0,0,4"/>
+                            <TextBox Text="{Binding QueueViewModel.SelectedJob.DetailBody, Mode=OneWay}"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     HorizontalScrollBarVisibility="Auto"
+                                     FontFamily="Consolas"
+                                     FontSize="12"
+                                     Background="{StaticResource SurfaceBrush}"
+                                     AcceptsReturn="True"/>
+                        </DockPanel>
+                        <DockPanel Grid.Column="2">
+                            <TextBlock DockPanel.Dock="Top" Text="Nhật ký hàng đợi" FontWeight="Bold" Margin="0,0,0,4"/>
+                            <ListBox ItemsSource="{Binding QueueViewModel.LogLines}"
+                                     Background="{StaticResource SurfaceBrush}"/>
+                        </DockPanel>
+                    </Grid>
                 </Grid>
             </TabItem>
 
@@ -255,19 +349,22 @@
                         <TextBlock Text="Cài đặt" FontSize="20" FontWeight="Bold" Margin="0,0,0,16"/>
                         
                         <Label Content="Đường dẫn FFmpeg:"/>
-                        <Grid Margin="0,0,0,16">
+                        <Grid Margin="0,0,0,4">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <TextBox Text="{Binding SettingsViewModel.FfmpegPath}" Grid.Column="0" Margin="0,0,8,0"/>
-                            <Button Content="Dò tìm" Grid.Column="1"/>
+                            <TextBox Text="{Binding SettingsViewModel.FfmpegPath}" Grid.Column="0" Margin="0,0,8,0" IsReadOnly="True"/>
                         </Grid>
+                        <TextBlock Text="{Binding SettingsViewModel.FfmpegVersion, StringFormat='Phiên bản: {0}'}"
+                                   Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,8"/>
+                        <TextBlock TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,16"
+                                   Text="FFmpeg đi kèm app. Render ưu tiên NVENC (GPU) + decode CUDA/D3D11; chỉ dùng CPU khi máy không có NVIDIA."/>
 
                         <Label Content="Số job song song:"/>
                         <ComboBox SelectedValue="{Binding SettingsViewModel.ParallelCount}" Width="200" HorizontalAlignment="Left">
-                            <ComboBoxItem Content="1" IsSelected="True"/>
-                            <ComboBoxItem Content="2"/>
+                            <ComboBoxItem Content="1"/>
+                            <ComboBoxItem Content="2" IsSelected="True"/>
                             <ComboBoxItem Content="3"/>
                         </ComboBox>
                     </StackPanel>

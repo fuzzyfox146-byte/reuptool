@@ -7,7 +7,46 @@ namespace VideoAutoTool.Core.Tests;
 public class JobPlannerTests
 {
     [Fact]
-    public async Task Plan_GoldenBackgroundChain_MatchesSpec()
+    public async Task Plan_OneBackgroundPerJob_RoundRobinsAssets_TrimsLongerClips()
+    {
+        var probe = new FakeMediaProbe(new Dictionary<string, MediaInfo>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["d1"] = new("d1", 14, true, 14, false, null, null, null, null, false, null),
+            ["d2"] = new("d2", 9, true, 9, false, null, null, null, null, false, null),
+            ["d3"] = new("d3", 21, true, 21, false, null, null, null, null, false, null),
+            ["bg1"] = new("bg1", 20, false, null, true, 1920, 1080, 30, "yuv420p", false, null),
+            ["bg2"] = new("bg2", 10, false, null, true, 1920, 1080, 30, "yuv420p", false, null),
+            ["bg3"] = new("bg3", 30, false, null, true, 1280, 720, 30, "yuv420p", false, null),
+            ["a1"] = new("a1", null, false, null, true, 500, 700, null, "rgba", true, null),
+            ["a2"] = new("a2", null, false, null, true, 800, 800, null, "rgba", true, null),
+            ["a3"] = new("a3", null, false, null, true, 600, 900, null, "rgba", true, null),
+            ["w1"] = new("w1", 2.5, false, null, true, 640, 160, 60, "argb", true, null),
+            ["w2"] = new("w2", 3.0, false, null, true, 640, 160, 60, "argb", true, null)
+        });
+
+        var template = TemplateDefaults.CreateCo139();
+        var root = CreateFakeRoot(template);
+        var planner = new JobPlanner(probe);
+        var plan1 = await planner.PlanAsync(template, root);
+        var plan2 = await planner.PlanAsync(template, root);
+
+        Assert.Equal(3, plan1.Jobs.Count);
+        Assert.Equal(["bg1"], SegmentNames(plan1.Jobs[0]));
+        Assert.Equal(["bg2"], SegmentNames(plan1.Jobs[1]));
+        Assert.Equal(["bg3"], SegmentNames(plan1.Jobs[2]));
+        Assert.Single(plan1.Jobs[0].Backgrounds);
+        Assert.True(plan1.Jobs[0].Backgrounds[0].DurationFull >= plan1.Jobs[0].DurationSeconds);
+        Assert.EndsWith("a1.png", plan1.Jobs[0].AvatarPath);
+        Assert.EndsWith("a2.png", plan1.Jobs[1].AvatarPath);
+        Assert.EndsWith("a3.png", plan1.Jobs[2].AvatarPath);
+        Assert.Contains("w1", plan1.Jobs[0].WavePath);
+        Assert.Contains("w2", plan1.Jobs[1].WavePath);
+        Assert.Contains("w1", plan1.Jobs[2].WavePath);
+        Assert.Equal(plan1.Jobs.Select(j => j.OutputPath), plan2.Jobs.Select(j => j.OutputPath));
+    }
+
+    [Fact]
+    public async Task Plan_SkipsDriver_WhenNoBackgroundIsLongEnough()
     {
         var probe = new FakeMediaProbe(new Dictionary<string, MediaInfo>(StringComparer.OrdinalIgnoreCase)
         {
@@ -20,23 +59,17 @@ public class JobPlannerTests
             ["a1"] = new("a1", null, false, null, true, 500, 700, null, "rgba", true, null),
             ["a2"] = new("a2", null, false, null, true, 800, 800, null, "rgba", true, null),
             ["a3"] = new("a3", null, false, null, true, 600, 900, null, "rgba", true, null),
-            ["w1"] = new("w1", 2.5, false, null, true, 640, 160, 60, "argb", true, null)
+            ["w1"] = new("w1", 2.5, false, null, true, 640, 160, 60, "argb", true, null),
+            ["w2"] = new("w2", 3.0, false, null, true, 640, 160, 60, "argb", true, null)
         });
 
         var template = TemplateDefaults.CreateCo139();
         var root = CreateFakeRoot(template);
         var planner = new JobPlanner(probe);
-        var plan1 = await planner.PlanAsync(template, root);
-        var plan2 = await planner.PlanAsync(template, root);
+        var plan = await planner.PlanAsync(template, root);
 
-        Assert.Equal(3, plan1.Jobs.Count);
-        Assert.Equal(["bg1", "bg2", "bg3"], SegmentNames(plan1.Jobs[0]));
-        Assert.Equal(["bg1", "bg2"], SegmentNames(plan1.Jobs[1]));
-        Assert.Equal(["bg3", "bg1", "bg2"], SegmentNames(plan1.Jobs[2]));
-        Assert.EndsWith("a1.png", plan1.Jobs[0].AvatarPath);
-        Assert.EndsWith("a2.png", plan1.Jobs[1].AvatarPath);
-        Assert.EndsWith("a3.png", plan1.Jobs[2].AvatarPath);
-        Assert.Equal(plan1.Jobs.Select(j => j.OutputPath), plan2.Jobs.Select(j => j.OutputPath));
+        Assert.Empty(plan.Jobs);
+        Assert.Contains(plan.Warnings, w => w.Message.Contains("Skipped", StringComparison.OrdinalIgnoreCase));
     }
 
     private static List<string> SegmentNames(RenderJobPlan job) =>
@@ -55,6 +88,7 @@ public class JobPlannerTests
         WriteFile(root, "avatar", "a2.png");
         WriteFile(root, "avatar", "a3.png");
         WriteFile(root, "soundwave", "w1.mov");
+        WriteFile(root, "soundwave", "w2.mov");
         WriteFile(root, @"text\SUB", "001 d1.en.srt");
         WriteFile(root, @"text\SUB", "002 d2.en.srt");
         WriteFile(root, @"text\SUB", "003 d3.en.srt");

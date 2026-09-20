@@ -215,7 +215,8 @@ internal static class CliApp
             Console.WriteLine($"\n=== Cached Render ===");
             Console.WriteLine("Preparing assets...");
             var prepStart = DateTime.UtcNow;
-            await assetService.PrepareBackgroundsAsync(template, job, cancellationToken: default).ConfigureAwait(false);
+            var encode = await new EncoderSelector(runner).SelectAsync(preferNvenc: true).ConfigureAwait(false);
+            await assetService.PrepareBackgroundsAsync(template, job, encode.Encoder, encode.HwAccel, cancellationToken: default).ConfigureAwait(false);
             var prepElapsed = (DateTime.UtcNow - prepStart).TotalSeconds;
             
             Console.WriteLine("Rendering with cache...");

@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
+using System.ComponentModel;
 using System.IO;
-using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using VideoAutoTool.App.Services;
@@ -45,6 +46,12 @@ public sealed partial class DesignViewModel : ObservableObject
 
     public bool IsTextStyleVisible => SelectedLayerItem?.IsTextLayer == true;
 
+    public event EventHandler? DesignsChanged;
+
+    public event EventHandler? ContentChanged;
+
+    public Template ExportTemplate() => BuildTemplate();
+
     public DesignViewModel(IFontCatalog fonts, IUiDialogs dialogs)
     {
         _fonts = fonts;
@@ -64,7 +71,67 @@ public sealed partial class DesignViewModel : ObservableObject
         SelectedStylePreset = StylePresets.FirstOrDefault();
         ApplySamplePreviews(resetBoxes: true);
         ReloadFonts();
+        History.Changed += (_, _) => RaiseContentChanged();
+        Layers.CollectionChanged += OnLayerCollectionChanged;
+        StylePresets.CollectionChanged += OnStyleCollectionChanged;
+        foreach (var layer in Layers)
+        {
+            layer.PropertyChanged += OnLayerPropertyChanged;
+        }
+
+        foreach (var preset in StylePresets)
+        {
+            preset.PropertyChanged += OnStylePresetEdited;
+        }
     }
+
+    private void RaiseContentChanged() => ContentChanged?.Invoke(this, EventArgs.Empty);
+
+    private void OnLayerCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (e.OldItems is not null)
+        {
+            foreach (LayerItemViewModel item in e.OldItems)
+            {
+                item.PropertyChanged -= OnLayerPropertyChanged;
+            }
+        }
+
+        if (e.NewItems is not null)
+        {
+            foreach (LayerItemViewModel item in e.NewItems)
+            {
+                item.PropertyChanged += OnLayerPropertyChanged;
+            }
+        }
+
+        RaiseContentChanged();
+    }
+
+    private void OnStyleCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        if (e.OldItems is not null)
+        {
+            foreach (StylePresetItemViewModel item in e.OldItems)
+            {
+                item.PropertyChanged -= OnStylePresetEdited;
+            }
+        }
+
+        if (e.NewItems is not null)
+        {
+            foreach (StylePresetItemViewModel item in e.NewItems)
+            {
+                item.PropertyChanged += OnStylePresetEdited;
+            }
+        }
+
+        RaiseContentChanged();
+    }
+
+    private void OnLayerPropertyChanged(object? sender, PropertyChangedEventArgs e) => RaiseContentChanged();
+
+    private void OnStylePresetEdited(object? sender, PropertyChangedEventArgs e) => RaiseContentChanged();
 
     partial void OnSelectedLayerItemChanged(LayerItemViewModel? value)
     {
@@ -76,6 +143,7 @@ public sealed partial class DesignViewModel : ObservableObject
         if (value is null || SelectedStylePreset is null) return;
         SelectedStylePreset.Font = value.FamilyName;
         SelectedStylePreset.FontSource = value.Source;
+        RaiseContentChanged();
     }
 
     private void ReloadFonts()
@@ -108,10 +176,26 @@ public sealed partial class DesignViewModel : ObservableObject
             ?? FontOptions.FirstOrDefault();
     }
 
-    partial void OnSelectedStylePresetChanged(StylePresetItemViewModel? value)
+    partial void OnSelectedStylePresetChanged(StylePresetItemViewModel? oldValue, StylePresetItemViewModel? newValue)
     {
+        if (oldValue is not null)
+        {
+            oldValue.PropertyChanged -= OnStylePresetPropertyChanged;
+        }
+
+        if (newValue is not null)
+        {
+            newValue.PropertyChanged += OnStylePresetPropertyChanged;
+        }
+
         SyncSelectedFontOption();
         ApplyStyleToSubtitlePreview();
+    }
+
+    private void OnStylePresetPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        ApplyStyleToSubtitlePreview();
+        RaiseContentChanged();
     }
 
     private void ApplySamplePreviews(bool resetBoxes)
@@ -170,7 +254,7 @@ public sealed partial class DesignViewModel : ObservableObject
         foreach (var item in Layers.Where(l => l.IsTextLayer))
         {
             item.PreviewColor = preset.Color;
-            item.PreviewFontSize = Math.Clamp(preset.Size * 2 / 3, 18, 48);
+            item.PreviewFontSize = Math.Clamp(preset.Size, 8, 200);
             item.Layer.StyleAssignment ??= new StyleAssignment
             {
                 Mode = StyleAssignmentMode.Fixed,
@@ -241,21 +325,17 @@ public sealed partial class DesignViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private async Task SaveDraftAsync()
+    private void SaveDraft()
     {
         try
         {
-            // Build template from current layers
             var template = BuildTemplate();
-            
-            // Serialize to JSON
-            var options = new JsonSerializerOptions { WriteIndented = true };
-            var json = JsonSerializer.Serialize(template, options);
-            
-            // Save to file
-            await File.WriteAllTextAsync(TemplatePath, json);
-            
-            Status = $"Đã lưu draft: {Path.GetFileName(TemplatePath)}";
+            TemplatePath = DesignLibrary.NextSavePath(template.Name);
+            template.Name = Path.GetFileNameWithoutExtension(TemplatePath);
+            TemplateStore.Save(TemplatePath, template);
+            DesignsChanged?.Invoke(this, EventArgs.Empty);
+            Status = $"Đã lưu bản mới: {Path.GetFileName(TemplatePath)}";
+            RaiseContentChanged();
         }
         catch (Exception ex)
         {
@@ -264,42 +344,13 @@ public sealed partial class DesignViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private async Task LoadDraftAsync()
+    private void LoadDraft()
     {
         try
         {
-            if (!File.Exists(TemplatePath))
-            {
-                Status = "Không tìm thấy file draft";
-                return;
-            }
-
-            // Read and deserialize
-            var json = await File.ReadAllTextAsync(TemplatePath);
-            var template = JsonSerializer.Deserialize<Template>(json);
-            
-            if (template?.Layers == null)
-            {
-                Status = "File draft không hợp lệ";
-                return;
-            }
-
-            // Load layers
-            Layers.Clear();
-            foreach (var layer in template.Layers)
-            {
-                Layers.Add(new LayerItemViewModel(layer));
-            }
-
-            StylePresets.Clear();
-            foreach (var preset in template.StylePresets)
-            {
-                StylePresets.Add(new StylePresetItemViewModel(preset));
-            }
-
-            SelectedStylePreset = StylePresets.FirstOrDefault();
-            ApplySamplePreviews(resetBoxes: false);
-            Status = $"Đã tải draft: {Path.GetFileName(TemplatePath)}";
+            var picked = _dialogs.PickOpenJson("Mở bản thiết kế", DesignLibrary.DirectoryPath);
+            if (string.IsNullOrWhiteSpace(picked)) return;
+            LoadFromFile(picked);
         }
         catch (Exception ex)
         {
@@ -307,7 +358,58 @@ public sealed partial class DesignViewModel : ObservableObject
         }
     }
 
-    private Template BuildTemplate()
+    public void LoadFromFile(string path)
+    {
+        var template = TemplateStore.Load(path);
+        ApplyLoadedTemplate(template);
+        TemplatePath = path;
+        DesignsChanged?.Invoke(this, EventArgs.Empty);
+        Status = $"Đã mở: {Path.GetFileName(path)}";
+        RaiseContentChanged();
+    }
+
+    public void ApplyTemplate(Template template, string? path)
+    {
+        ApplyLoadedTemplate(template);
+        if (!string.IsNullOrWhiteSpace(path))
+        {
+            TemplatePath = path;
+        }
+    }
+
+    public void SaveCurrentDesign()
+    {
+        var template = BuildTemplate();
+        if (string.IsNullOrWhiteSpace(TemplatePath) || !Path.IsPathRooted(TemplatePath))
+        {
+            TemplatePath = DesignLibrary.NextSavePath(template.Name);
+        }
+
+        template.Name = Path.GetFileNameWithoutExtension(TemplatePath);
+        TemplateStore.Save(TemplatePath, template);
+        DesignsChanged?.Invoke(this, EventArgs.Empty);
+        Status = $"Đã lưu: {Path.GetFileName(TemplatePath)}";
+    }
+
+    private void ApplyLoadedTemplate(Template template)
+    {
+        Layers.Clear();
+        foreach (var layer in template.Layers)
+        {
+            Layers.Add(new LayerItemViewModel(layer));
+        }
+
+        StylePresets.Clear();
+        foreach (var preset in template.StylePresets)
+        {
+            StylePresets.Add(new StylePresetItemViewModel(preset));
+        }
+
+        SelectedStylePreset = StylePresets.FirstOrDefault();
+        ApplySamplePreviews(resetBoxes: false);
+    }
+
+    public Template BuildTemplate()
     {
         var template = TemplateDefaults.CreateCo139();
         template.Layers = Layers.Select(l => l.Layer).ToList();

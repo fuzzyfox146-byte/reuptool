@@ -24,4 +24,34 @@
   <data name="ScanFolders" xml:space="preserve">
     <value>Quét folder</value>
   </data>
+  <data name="SaveDesignNew" xml:space="preserve">
+    <value>Lưu bản mới</value>
+  </data>
+  <data name="OpenDesign" xml:space="preserve">
+    <value>Mở bản cũ</value>
+  </data>
+  <data name="TemplateDesign" xml:space="preserve">
+    <value>Template design</value>
+  </data>
+  <data name="TestRender" xml:space="preserve">
+    <value>Render thử</value>
+  </data>
+  <data name="RealRender" xml:space="preserve">
+    <value>Render thật</value>
+  </data>
+  <data name="CurrentOpenDesign" xml:space="preserve">
+    <value>Thiết kế đang mở</value>
+  </data>
+  <data name="SaveAll" xml:space="preserve">
+    <value>Lưu tất cả (Ctrl+S)</value>
+  </data>
+  <data name="UnsavedCloseTitle" xml:space="preserve">
+    <value>Chưa lưu</value>
+  </data>
+  <data name="CopyJobDetails" xml:space="preserve">
+    <value>Copy lỗi / chi tiết</value>
+  </data>
+  <data name="FfmpegBundledHint" xml:space="preserve">
+    <value>FFmpeg đi kèm app (thư mục tools\ffmpeg cạnh file .exe). Không cần cài PATH.</value>
+  </data>
 </root>

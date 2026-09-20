@@ -18,4 +18,16 @@ public class TemplateStoreTests
         Assert.Equal(330, loaded.StylePresets[1].Box.Y);
         Assert.Equal("gold-serif", loaded.Layers.First(l => l.Type == LayerType.Subtitle).StyleAssignment?.Presets?.First());
     }
+
+    [Fact]
+    public void Clone_IsIndependentCopy()
+    {
+        var template = TemplateDefaults.CreateCo139();
+        var clone = TemplateStore.Clone(template);
+        clone.Name = "cloned";
+        clone.Driver.Folder = "other";
+        Assert.NotEqual("cloned", template.Name);
+        Assert.NotEqual("other", template.Driver.Folder);
+        Assert.Equal(template.Layers.Count, clone.Layers.Count);
+    }
 }

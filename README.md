@@ -15,19 +15,7 @@ Công cụ Windows tự động hóa sản xuất video hàng loạt từ templa
 ## Yêu cầu hệ thống
 
 - **Windows 10/11** (64-bit)
-- **.NET 8 Runtime** (app tự động yêu cầu cài nếu thiếu)
-- **FFmpeg**: Download từ [ffmpeg.org](https://ffmpeg.org/download.html#build-windows), giải nén và thêm vào PATH, hoặc đặt trong folder app
-
-### Cài đặt FFmpeg (nếu chưa có)
-
-1. Download FFmpeg build cho Windows: https://www.gyan.dev/ffmpeg/builds/ (chọn "ffmpeg-release-essentials.zip")
-2. Giải nén file ZIP
-3. Copy folder `ffmpeg-xxx\bin` vào `C:\ffmpeg`
-4. Thêm `C:\ffmpeg\bin` vào biến môi trường PATH:
-   - Mở **System Properties** > **Environment Variables**
-   - Tìm biến **Path** trong **System variables**, click **Edit**
-   - Click **New**, nhập `C:\ffmpeg\bin`, click **OK**
-5. Mở Command Prompt mới và gõ `ffmpeg -version` để kiểm tra
+- **Không cần cài FFmpeg riêng**: app kèm `ffmpeg.exe` + `ffprobe.exe` trong `tools\ffmpeg` cạnh file .exe.
 
 ## Cài đặt
 
@@ -94,8 +82,7 @@ vat bench --template my-template.json --root "D:\testdata" --index 0
 ## Xử lý sự cố thường gặp
 
 ### Lỗi "FFmpeg not found"
-- Kiểm tra FFmpeg đã cài và trong PATH: mở CMD gõ `ffmpeg -version`
-- Hoặc trong tab Cài đặt, chỉ định đường dẫn đến ffmpeg.exe
+- App kèm ffmpeg tại `tools\ffmpeg` cạnh file .exe. Chạy lại `scripts\fetch-ffmpeg.ps1` rồi build/publish nếu thiếu file.
 
 ### Lỗi "Font not found"
 - Template yêu cầu font chưa cài trên Windows

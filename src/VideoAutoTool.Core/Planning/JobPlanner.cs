@@ -8,7 +8,6 @@ public sealed class JobPlanner
 {
     private const double DurationTolerance = 0.02;
     private const double MinBackgroundSeconds = 0.5;
-    private const int MaxBackgroundSegments = 500;
 
     private readonly IMediaProbe _probe;
 
@@ -43,6 +42,7 @@ public sealed class JobPlanner
 
         var subByNumber = BuildSubLookup(subs, warnings);
         var backgroundPointer = 0;
+        var durationCache = new Dictionary<string, MediaInfo>(StringComparer.OrdinalIgnoreCase);
 
         for (var i = 0; i < drivers.Count; i++)
         {
@@ -56,12 +56,22 @@ public sealed class JobPlanner
             }
 
             var duration = media.AudioDurationSeconds.Value;
-            var side = ResolveSide(template.AvatarSide, i);
-            var preset = ResolveStylePreset(template, i, warnings);
+            var (bgSegments, nextPointer) = await PickOneBackgroundAsync(
+                backgrounds, duration, durationCache, warnings, cancellationToken, backgroundPointer).ConfigureAwait(false);
+            backgroundPointer = nextPointer;
+            if (bgSegments.Count == 0)
+            {
+                warnings.Add(new PlanWarning(PlanWarningLevel.Warning,
+                    $"Skipped '{driver.FileName}': no background longer than source audio ({duration:0.##}s)."));
+                continue;
+            }
+
+            var pickIndex = jobs.Count;
+            var side = ResolveSide(template.AvatarSide, pickIndex);
+            var preset = ResolveStylePreset(template, pickIndex, warnings);
             var subPath = MatchSub(driver, subs, subByNumber, warnings);
-            var avatarPath = avatars.Count == 0 ? null : avatars[i % avatars.Count].AbsolutePath;
-            var wavePath = waves.Count == 0 ? null : waves[i % waves.Count].AbsolutePath;
-            var bgSegments = BuildBackgroundChain(backgrounds, ref backgroundPointer, duration, warnings);
+            var avatarPath = avatars.Count == 0 ? null : avatars[pickIndex % avatars.Count].AbsolutePath;
+            var wavePath = waves.Count == 0 ? null : waves[pickIndex % waves.Count].AbsolutePath;
             var outputPath = BuildOutputPath(root, template, driver);
 
             jobs.Add(new RenderJobPlan(
@@ -162,43 +172,61 @@ public sealed class JobPlanner
         _ => "right"
     };
 
-    private List<BackgroundSegment> BuildBackgroundChain(
+    /// <summary>
+    /// One background per job (round-robin). Longer clips are trimmed to the driver audio
+    /// (background audio is never mapped). Shorter clips are skipped in favor of a longer one;
+    /// if none is long enough the caller skips the job.
+    /// </summary>
+    private async Task<(List<BackgroundSegment> Segments, int NextPointer)> PickOneBackgroundAsync(
         IReadOnlyList<ScannedFile> backgrounds,
-        ref int pointer,
-        double duration,
-        List<PlanWarning> warnings)
+        double needSeconds,
+        Dictionary<string, MediaInfo> cache,
+        List<PlanWarning> warnings,
+        CancellationToken cancellationToken,
+        int pointer)
     {
         var segments = new List<BackgroundSegment>();
         if (backgrounds.Count == 0)
         {
             warnings.Add(new PlanWarning(PlanWarningLevel.Warning, "No background files available."));
-            return segments;
+            return (segments, pointer);
         }
 
-        var total = 0.0;
-        var guard = 0;
-        while (total < duration - DurationTolerance)
+        for (var n = 0; n < backgrounds.Count; n++)
         {
-            if (++guard > MaxBackgroundSegments)
-            {
-                throw new InvalidOperationException($"Background chain exceeded {MaxBackgroundSegments} segments.");
-            }
-
-            var bg = backgrounds[pointer % backgrounds.Count];
-            pointer++;
-
-            var media = _probe.ProbeAsync(bg.AbsolutePath).GetAwaiter().GetResult();
-            if (media.DurationSeconds is null or < MinBackgroundSeconds)
+            var idx = (pointer + n) % backgrounds.Count;
+            var bg = backgrounds[idx];
+            var media = await ProbeCachedAsync(bg.AbsolutePath, cache, cancellationToken).ConfigureAwait(false);
+            var duration = media.DurationSeconds ?? 0;
+            if (duration < MinBackgroundSeconds)
             {
                 warnings.Add(new PlanWarning(PlanWarningLevel.Warning, $"Skipping broken/short background '{bg.FileName}'."));
                 continue;
             }
 
-            segments.Add(new BackgroundSegment(bg.AbsolutePath, media.DurationSeconds.Value));
-            total += media.DurationSeconds.Value;
+            if (duration + DurationTolerance >= needSeconds)
+            {
+                segments.Add(new BackgroundSegment(bg.AbsolutePath, duration));
+                return (segments, (idx + 1) % backgrounds.Count);
+            }
         }
 
-        return segments;
+        return (segments, pointer);
+    }
+
+    private async Task<MediaInfo> ProbeCachedAsync(
+        string path,
+        Dictionary<string, MediaInfo> cache,
+        CancellationToken cancellationToken)
+    {
+        if (cache.TryGetValue(path, out var cached))
+        {
+            return cached;
+        }
+
+        var media = await _probe.ProbeAsync(path, cancellationToken).ConfigureAwait(false);
+        cache[path] = media;
+        return media;
     }
 
     private static string BuildOutputPath(string root, Template template, ScannedFile driver)

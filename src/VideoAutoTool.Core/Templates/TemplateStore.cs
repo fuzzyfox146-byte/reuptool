@@ -37,6 +37,12 @@ public static class TemplateStore
         File.WriteAllText(path, json);
     }
 
+    public static Template Clone(Template template)
+    {
+        var json = JsonSerializer.Serialize(template, TemplateJsonContext.Options);
+        return Deserialize(json);
+    }
+
     private static void MigrateLegacySubBox(Template template)
     {
         var subLayer = template.Layers.FirstOrDefault(l => l.Type == LayerType.Subtitle);

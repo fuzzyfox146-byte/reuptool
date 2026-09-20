@@ -1,5 +1,4 @@
 using VideoAutoTool.Core.Planning;
-using VideoAutoTool.Core.Queue;
 using VideoAutoTool.Core.Render;
 using VideoAutoTool.Core.Templates;
 
@@ -17,6 +16,8 @@ public sealed class JobRendererAdapter : IJobRunner
         _renderer = renderer ?? throw new ArgumentNullException(nameof(renderer));
     }
 
+    public RenderRequest ActiveRequest { get; set; } = new(RenderMode.Full);
+
     public async Task RenderAsync(
         RenderJobItem job,
         Template template,
@@ -27,7 +28,7 @@ public sealed class JobRendererAdapter : IJobRunner
         await _renderer.RenderAsync(
             template,
             plan,
-            new RenderRequest(RenderMode.Full),
+            ActiveRequest,
             job.OutputPath,
             useCache: true,  // Use cache by default for queue rendering
             progress,

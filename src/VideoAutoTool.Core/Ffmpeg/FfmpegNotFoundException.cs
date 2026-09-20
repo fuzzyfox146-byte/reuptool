@@ -5,8 +5,7 @@ public sealed class FfmpegNotFoundException : Exception
     public FfmpegNotFoundException()
         : base(
             "Không tìm thấy ffmpeg hoặc ffprobe. " +
-            "Cài ffmpeg (winget install Gyan.FFmpeg) hoặc đặt vào C:\\ffmpeg\\bin, C:\\tools\\ffmpeg\\bin, " +
-            "hoặc cấu hình đường dẫn trong tab Cài đặt của ứng dụng.")
+            "App đã kèm ffmpeg trong tools\\ffmpeg cạnh file .exe; nếu thiếu hãy chạy scripts\\fetch-ffmpeg.ps1 rồi build lại.")
     {
     }
 }

@@ -271,8 +271,8 @@ public sealed class RenderQueue : IDisposable
         catch (Exception ex)
         {
             UpdateJobStatus(job, JobStatus.Failed);
-            job.ErrorMessage = ex.Message;
-            job.LogTail = ex.ToString().Split('\n').TakeLast(10).Select(l => l.Trim()).Where(l => l.Length > 0).Take(5).Aggregate("", (a, b) => a + "\n" + b);
+            job.ErrorMessage = FlattenMessages(ex);
+            job.LogTail = ex.ToString();
             job.FinishedAt = DateTime.UtcNow;
         }
         finally
@@ -329,6 +329,21 @@ public sealed class RenderQueue : IDisposable
     private void RaiseJobStatusChanged(RenderJobItem job)
     {
         JobStatusChanged?.Invoke(this, job);
+    }
+
+    private static string FlattenMessages(Exception ex)
+    {
+        var parts = new List<string>();
+        for (var current = ex; current is not null; current = current.InnerException)
+        {
+            if (!string.IsNullOrWhiteSpace(current.Message) &&
+                (parts.Count == 0 || parts[^1] != current.Message))
+            {
+                parts.Add(current.Message);
+            }
+        }
+
+        return string.Join(Environment.NewLine, parts);
     }
 
     public void Dispose()

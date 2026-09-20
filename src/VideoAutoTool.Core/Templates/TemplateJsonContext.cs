@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace VideoAutoTool.Core.Templates;
 
-internal static class TemplateJsonContext
+public static class TemplateJsonContext
 {
     public static JsonSerializerOptions Options { get; } = CreateOptions();
 

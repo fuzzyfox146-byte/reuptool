@@ -1,0 +1,27 @@
+<Project>
+  <PropertyGroup>
+    <VatRepoRoot>$(MSBuildThisFileDirectory)..</VatRepoRoot>
+    <VatFfmpegDir>$(VatRepoRoot)\tools\ffmpeg</VatFfmpegDir>
+  </PropertyGroup>
+
+  <Target Name="EnsureBundledFfmpeg" BeforeTargets="BeforeBuild">
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(VatRepoRoot)\scripts\fetch-ffmpeg.ps1&quot;"
+          Condition="!Exists('$(VatFfmpegDir)\ffmpeg.exe')" />
+  </Target>
+
+  <Target Name="CopyBundledFfmpegToOutput" AfterTargets="Build">
+    <MakeDir Directories="$(OutDir)tools\ffmpeg" Condition="Exists('$(VatFfmpegDir)\ffmpeg.exe')" />
+    <Copy SourceFiles="$(VatFfmpegDir)\ffmpeg.exe;$(VatFfmpegDir)\ffprobe.exe"
+          DestinationFolder="$(OutDir)tools\ffmpeg"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(VatFfmpegDir)\ffmpeg.exe')" />
+  </Target>
+
+  <Target Name="CopyBundledFfmpegToPublish" AfterTargets="Publish">
+    <MakeDir Directories="$(PublishDir)tools\ffmpeg" Condition="Exists('$(VatFfmpegDir)\ffmpeg.exe')" />
+    <Copy SourceFiles="$(VatFfmpegDir)\ffmpeg.exe;$(VatFfmpegDir)\ffprobe.exe"
+          DestinationFolder="$(PublishDir)tools\ffmpeg"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(VatFfmpegDir)\ffmpeg.exe')" />
+  </Target>
+</Project>

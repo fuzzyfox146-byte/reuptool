@@ -11,7 +11,7 @@ public static class ValidationRules
     public static ValidationIssue E001() => new(
         "E001", ValidationLevel.Error, "global",
         "Không tìm thấy ffmpeg/ffprobe.",
-        "Cài ffmpeg (winget install Gyan.FFmpeg) hoặc cấu hình đường dẫn trong Cài đặt.");
+        "FFmpeg đã kèm trong app (tools\\ffmpeg). Nếu lỗi, chạy scripts\\fetch-ffmpeg.ps1 rồi build lại.");
 
     public static ValidationIssue E010(string layerId, string folder) => new(
         "E010", ValidationLevel.Error, $"layer:{layerId}",

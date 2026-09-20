@@ -8,8 +8,11 @@ publish/
 TestResults/
 ## Project
 testdata/
-cache/
+/cache/
 *.part
+tools/ffmpeg/*.exe
+tools/ffmpeg/*.dll
+tools/cache/
 ## Media
 *.mp4
 *.mov

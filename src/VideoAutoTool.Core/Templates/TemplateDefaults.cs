@@ -36,7 +36,7 @@ public static class TemplateDefaults
                 {
                     Folder = "background",
                     Extensions = [".mp4", ".mov", ".mkv"],
-                    Pick = PickMode.SequentialChain
+                    Pick = PickMode.RoundRobin
                 },
                 ScaleMode = ScaleMode.Cover,
                 Scale = 1.5,

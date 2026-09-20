@@ -33,6 +33,13 @@ public static class FfmpegLocator
             yield return configuredDirectory;
         }
 
+        var baseDir = AppContext.BaseDirectory;
+        if (!string.IsNullOrWhiteSpace(baseDir))
+        {
+            yield return Path.Combine(baseDir, "tools", "ffmpeg");
+            yield return baseDir;
+        }
+
         var pathEnv = Environment.GetEnvironmentVariable("PATH");
         if (!string.IsNullOrWhiteSpace(pathEnv))
         {

@@ -59,17 +59,17 @@ public partial class App : Application
 
         // Builders
         services.AddTransient<AssBuilder>();
-        services.AddTransient<JobRenderer>();
-        services.AddTransient<JobRendererAdapter>();
+        services.AddSingleton<JobRenderer>();
+        services.AddSingleton<JobRendererAdapter>();
 
         services.AddSingleton<IUiDialogs, WpfUiDialogs>();
 
-        // ViewModels
-        services.AddTransient<MainViewModel>();
-        services.AddTransient<DesignViewModel>();
-        services.AddTransient<SourceViewModel>();
-        services.AddTransient<QueueViewModel>();
-        services.AddTransient<SettingsViewModel>();
+        // ViewModels (singletons so Design/Source/Queue share the same session)
+        services.AddSingleton<DesignViewModel>();
+        services.AddSingleton<SettingsViewModel>();
+        services.AddSingleton<QueueViewModel>();
+        services.AddSingleton<SourceViewModel>();
+        services.AddSingleton<MainViewModel>();
 
         // Views
         services.AddTransient<MainWindow>();
