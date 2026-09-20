@@ -1,21 +1,19 @@
 # PROGRESS - handoff log (agent: read first, update at the end of every task)
 
 ## Current state
-- Milestone: **GPU-first encode** (Version **1.0.14**).
-- Latest: Auto/NVENC uses **h264_nvenc** (preset p4) for final render **and** cache prepare-background. Video inputs get `-hwaccel cuda` (or d3d11va). Queue label shows NVENC/CPU. Default parallel jobs = 2.
+- Milestone: **concat list UTF-8 no BOM** (Version **1.0.15**).
+- Git: `621fc11` on `main` (queue/session/ffmpeg/NVENC/cache) **before** this concat fix.
+- Latest: ffmpeg concat failed with `unknown keyword '﻿file'` because `Encoding.UTF8` writes a BOM. Concat list is now UTF-8 **without** BOM.
 
 ## Done
-- v1.0.13: cache `.tmp.mp4` muxer fix.
-- **v1.0.14**: EncoderSelector returns `EncodeSettings`; cache no longer hardcodes libx264.
+- Commit `621fc11` Ship queue, session save, bundled FFmpeg, NVENC, and cache pipeline.
+- Stopped ignoring `src/.../Cache` (gitignore was `cache/` matching any folder named cache).
 
 ## Decisions
-- Filters stay CPU (verified overlay/ass graph). GPU = hardware **decode** + NVENC **encode**.
-- Wave cache stays qtrle (alpha). Avatar PNG stays CPU (tiny).
-- Forced X264 in template still CPU encode, but may still hw-decode.
+- Concat demuxer list: `UTF8Encoding(encoderShouldEmitUTF8Identifier: false)`.
 
 ## Open issues / risks
-- NVENC/hwaccel not integration-tested in this session (needs NVIDIA on the run machine).
-- If `-hwaccel cuda` breaks a filter job, fallback is still missing (retry without hwaccel).
+- NVENC/hwaccel still not integration-tested beyond encode probe.
 
 ## Next step
-- User: publish exe, Render thử, check queue label “NVENC GPU”.
+- User: publish 1.0.15, Render thử lại.

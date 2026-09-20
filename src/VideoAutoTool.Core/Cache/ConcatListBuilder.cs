@@ -1,4 +1,4 @@
-﻿namespace VideoAutoTool.Core.Cache;
+namespace VideoAutoTool.Core.Cache;
 
 public static class ConcatListBuilder
 {
@@ -7,7 +7,7 @@ public static class ConcatListBuilder
         Directory.CreateDirectory(tempDir);
         var listPath = Path.Combine(tempDir, $"concat_{Guid.NewGuid():N}.txt");
         
-        using var writer = new StreamWriter(listPath, append: false, System.Text.Encoding.UTF8);
+        using var writer = new StreamWriter(listPath, append: false, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
         foreach (var path in filePaths)
         {
             var absolutePath = Path.GetFullPath(path);

@@ -1,4 +1,4 @@
-﻿using VideoAutoTool.Core.Cache;
+using VideoAutoTool.Core.Cache;
 using Xunit;
 
 namespace VideoAutoTool.Core.Tests.Cache;
@@ -61,6 +61,18 @@ public class ConcatListBuilderTests
         var fullPath = Path.GetFullPath("video.mp4");
         Assert.Contains($"file '{fullPath}'", content);
 
+        Directory.Delete(tempDir, true);
+    }
+
+    [Fact]
+    public void Create_DoesNotWriteUtf8Bom()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        var listPath = ConcatListBuilder.Create(new List<string> { @"D:\video1.mp4" }, tempDir);
+        var bytes = File.ReadAllBytes(listPath);
+        Assert.True(bytes.Length >= 4);
+        Assert.Equal((byte)'f', bytes[0]);
+        Assert.False(bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF);
         Directory.Delete(tempDir, true);
     }
 }

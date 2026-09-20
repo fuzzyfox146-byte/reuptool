@@ -13,6 +13,7 @@ testdata/
 tools/ffmpeg/*.exe
 tools/ffmpeg/*.dll
 tools/cache/
+src/VideoAutoTool.Core/Cache/test.txt
 ## Media
 *.mp4
 *.mov
