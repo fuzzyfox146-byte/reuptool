@@ -123,6 +123,8 @@ public sealed class TransformSettings
     public double Scale { get; set; } = 1.0;
 
     public int? Width { get; set; }
+
+    public int? Height { get; set; }
 }
 
 public sealed class StyleAssignment

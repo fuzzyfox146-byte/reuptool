@@ -7,6 +7,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using VideoAutoTool.App.ViewModels;
+using VideoAutoTool.Core.Design;
 using VideoAutoTool.Core.Templates;
 
 namespace VideoAutoTool.App.Controls;
@@ -20,6 +21,7 @@ public partial class DesignCanvasControl : UserControl
 {
     private const double HandleHit = 12;   // hit tolerance for a corner (canvas px)
     private const double HandleVisual = 10; // drawn handle size (canvas px)
+    private const double MinSize = 10;      // minimum layer width/height (canvas px)
 
     public static readonly DependencyProperty LayersProperty =
         DependencyProperty.Register(nameof(Layers), typeof(ObservableCollection<LayerItemViewModel>),
@@ -43,7 +45,18 @@ public partial class DesignCanvasControl : UserControl
         set => SetValue(SelectedLayerProperty, value);
     }
 
-    private enum Corner { None, TopLeft, TopRight, BottomLeft, BottomRight }
+    public static readonly DependencyProperty HistoryProperty =
+        DependencyProperty.Register(nameof(History), typeof(DesignHistory),
+            typeof(DesignCanvasControl), new PropertyMetadata(null, OnHistoryChanged));
+
+    /// <summary>Undo/redo history. When set, canvas refreshes on every history change.</summary>
+    public DesignHistory? History
+    {
+        get => (DesignHistory?)GetValue(HistoryProperty);
+        set => SetValue(HistoryProperty, value);
+    }
+
+    private enum ResizeHandle { None, TopLeft, TopRight, BottomLeft, BottomRight, Left, Right, Top, Bottom }
     private enum Mode { None, Dragging, Resizing }
 
     private sealed class LayerVisual
@@ -59,11 +72,11 @@ public partial class DesignCanvasControl : UserControl
     private readonly Dictionary<LayerItemViewModel, LayerVisual> _visuals = new();
 
     private Mode _mode = Mode.None;
-    private Corner _resizeCorner = Corner.None;
+    private ResizeHandle _resizeHandle = ResizeHandle.None;
     private LayerItemViewModel? _activeLayer;
     private Point _startMouse;
-    private double _startScale;
-    private double _fixedX, _fixedY; // opposite (anchored) corner in canvas coords during resize
+    // Layer geometry captured at the start of a resize (canvas coords / px).
+    private double _startX, _startY, _startW, _startH;
 
     public DesignCanvasControl()
     {
@@ -112,6 +125,8 @@ public partial class DesignCanvasControl : UserControl
             case nameof(LayerItemViewModel.X):
             case nameof(LayerItemViewModel.Y):
             case nameof(LayerItemViewModel.LayerScale):
+            case nameof(LayerItemViewModel.LayerWidth):
+            case nameof(LayerItemViewModel.LayerHeight):
                 if (_visuals.TryGetValue(item, out var v)) UpdateContainerGeometry(v);
                 break;
             case nameof(LayerItemViewModel.IsVisible):
@@ -132,6 +147,22 @@ public partial class DesignCanvasControl : UserControl
         var selected = e.NewValue as LayerItemViewModel;
         foreach (var item in control.Layers)
             item.IsSelected = ReferenceEquals(item, selected);
+    }
+
+    // ---- Undo/redo history --------------------------------------------------------
+
+    private static void OnHistoryChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        if (d is not DesignCanvasControl control) return;
+        if (e.OldValue is DesignHistory oldHistory) oldHistory.Changed -= control.OnHistoryApplied;
+        if (e.NewValue is DesignHistory newHistory) newHistory.Changed += control.OnHistoryApplied;
+    }
+
+    private void OnHistoryApplied(object? sender, EventArgs e)
+    {
+        // Model was mutated by execute/undo/redo: redraw and refresh the panel.
+        RenderLayers();
+        SelectedLayer?.NotifyTransformChanged();
     }
 
     private void UpdateSelectionVisuals()
@@ -165,10 +196,15 @@ public partial class DesignCanvasControl : UserControl
             var style = GetStyle(item.Layer.Type);
             var scale = t.Scale <= 0 ? 1.0 : t.Scale;
 
+            // First time a layer is shown we derive an explicit px size from the
+            // base size * legacy Scale. After that width/height are independent.
+            t.Width ??= (int)Math.Round(style.BaseWidth * scale);
+            t.Height ??= (int)Math.Round(style.BaseHeight * scale);
+
             var container = new Border
             {
-                Width = style.BaseWidth * scale,
-                Height = style.BaseHeight * scale,
+                Width = Math.Max(MinSize, t.Width.Value),
+                Height = Math.Max(MinSize, t.Height.Value),
                 Background = style.Fill,
                 BorderBrush = style.Stroke,
                 BorderThickness = new Thickness(2),
@@ -195,10 +231,16 @@ public partial class DesignCanvasControl : UserControl
 
             var handles = new[]
             {
+                // Corners
                 CreateHandle(HorizontalAlignment.Left, VerticalAlignment.Top, Cursors.SizeNWSE),
                 CreateHandle(HorizontalAlignment.Right, VerticalAlignment.Top, Cursors.SizeNESW),
                 CreateHandle(HorizontalAlignment.Left, VerticalAlignment.Bottom, Cursors.SizeNESW),
-                CreateHandle(HorizontalAlignment.Right, VerticalAlignment.Bottom, Cursors.SizeNWSE)
+                CreateHandle(HorizontalAlignment.Right, VerticalAlignment.Bottom, Cursors.SizeNWSE),
+                // Edges (mid-side)
+                CreateHandle(HorizontalAlignment.Left, VerticalAlignment.Center, Cursors.SizeWE),
+                CreateHandle(HorizontalAlignment.Right, VerticalAlignment.Center, Cursors.SizeWE),
+                CreateHandle(HorizontalAlignment.Center, VerticalAlignment.Top, Cursors.SizeNS),
+                CreateHandle(HorizontalAlignment.Center, VerticalAlignment.Bottom, Cursors.SizeNS)
             };
             foreach (var h in handles) grid.Children.Add(h);
 
@@ -235,9 +277,10 @@ public partial class DesignCanvasControl : UserControl
             StrokeThickness = 1,
             HorizontalAlignment = h,
             VerticalAlignment = v,
-            // pull half the handle outside so it sits centred on the corner
+            // pull half the handle outside so it sits centred on the corner/edge
             Margin = new Thickness(
-                h == HorizontalAlignment.Left ? -HandleVisual / 2 : 0, 0,
+                h == HorizontalAlignment.Left ? -HandleVisual / 2 : 0,
+                v == VerticalAlignment.Top ? -HandleVisual / 2 : 0,
                 h == HorizontalAlignment.Right ? -HandleVisual / 2 : 0,
                 v == VerticalAlignment.Bottom ? -HandleVisual / 2 : 0),
             Cursor = cursor,
@@ -251,8 +294,8 @@ public partial class DesignCanvasControl : UserControl
         var t = v.Item.Layer.Transform;
         if (t == null) return;
         var scale = t.Scale <= 0 ? 1.0 : t.Scale;
-        v.Container.Width = v.BaseWidth * scale;
-        v.Container.Height = v.BaseHeight * scale;
+        v.Container.Width = Math.Max(MinSize, t.Width ?? v.BaseWidth * scale);
+        v.Container.Height = Math.Max(MinSize, t.Height ?? v.BaseHeight * scale);
         Canvas.SetLeft(v.Container, t.X);
         Canvas.SetTop(v.Container, t.Y);
     }
@@ -282,29 +325,16 @@ public partial class DesignCanvasControl : UserControl
 
         _activeLayer = item;
         _startMouse = e.GetPosition(MainCanvas);
-        _startScale = t.Scale <= 0 ? 1.0 : t.Scale;
+        // Capture the box at gesture start (used for resize math and for the undo record).
+        _startX = t.X;
+        _startY = t.Y;
+        _startW = container.Width;
+        _startH = container.Height;
 
         var local = e.GetPosition(container);
-        var corner = HitCorner(local, container.Width, container.Height);
-        if (corner != Corner.None && _visuals.TryGetValue(item, out var v))
-        {
-            _mode = Mode.Resizing;
-            _resizeCorner = corner;
-            double w = v.BaseWidth * _startScale;
-            double h = v.BaseHeight * _startScale;
-            (_fixedX, _fixedY) = corner switch
-            {
-                Corner.BottomRight => (t.X, t.Y),
-                Corner.BottomLeft => (t.X + w, t.Y),
-                Corner.TopRight => (t.X, t.Y + h),
-                Corner.TopLeft => (t.X + w, t.Y + h),
-                _ => (t.X, t.Y)
-            };
-        }
-        else
-        {
-            _mode = Mode.Dragging;
-        }
+        var handle = HitHandle(local, container.Width, container.Height);
+        _mode = handle != ResizeHandle.None ? Mode.Resizing : Mode.Dragging;
+        _resizeHandle = handle;
 
         container.CaptureMouse();
         e.Handled = true;
@@ -318,10 +348,12 @@ public partial class DesignCanvasControl : UserControl
             if (item.IsSelected && !item.IsLocked)
             {
                 var local = e.GetPosition(container);
-                container.Cursor = HitCorner(local, container.Width, container.Height) switch
+                container.Cursor = HitHandle(local, container.Width, container.Height) switch
                 {
-                    Corner.TopLeft or Corner.BottomRight => Cursors.SizeNWSE,
-                    Corner.TopRight or Corner.BottomLeft => Cursors.SizeNESW,
+                    ResizeHandle.TopLeft or ResizeHandle.BottomRight => Cursors.SizeNWSE,
+                    ResizeHandle.TopRight or ResizeHandle.BottomLeft => Cursors.SizeNESW,
+                    ResizeHandle.Left or ResizeHandle.Right => Cursors.SizeWE,
+                    ResizeHandle.Top or ResizeHandle.Bottom => Cursors.SizeNS,
                     _ => Cursors.SizeAll
                 };
             }
@@ -346,21 +378,36 @@ public partial class DesignCanvasControl : UserControl
             item.Y += dy;
             _startMouse = cur;
         }
-        else if (_mode == Mode.Resizing && _visuals.TryGetValue(item, out var v))
+        else if (_mode == Mode.Resizing)
         {
-            double scaleX = Math.Abs(cur.X - _fixedX) / v.BaseWidth;
-            double scaleY = Math.Abs(cur.Y - _fixedY) / v.BaseHeight;
-            double scale = Math.Max(0.1, (scaleX + scaleY) / 2.0);
+            // Independent width/height resize. The edge/corner opposite the dragged
+            // one stays anchored; width and height change on their own axes only.
+            bool leftMoving = _resizeHandle is ResizeHandle.TopLeft or ResizeHandle.BottomLeft or ResizeHandle.Left;
+            bool rightMoving = _resizeHandle is ResizeHandle.TopRight or ResizeHandle.BottomRight or ResizeHandle.Right;
+            bool topMoving = _resizeHandle is ResizeHandle.TopLeft or ResizeHandle.TopRight or ResizeHandle.Top;
+            bool bottomMoving = _resizeHandle is ResizeHandle.BottomLeft or ResizeHandle.BottomRight or ResizeHandle.Bottom;
 
-            double newW = v.BaseWidth * scale;
-            double newH = v.BaseHeight * scale;
+            double rightEdge = _startX + _startW;
+            double bottomEdge = _startY + _startH;
 
-            bool leftMoving = _resizeCorner is Corner.TopLeft or Corner.BottomLeft;
-            bool topMoving = _resizeCorner is Corner.TopLeft or Corner.TopRight;
+            double newW, newX;
+            if (leftMoving) { newW = rightEdge - cur.X; newX = cur.X; }
+            else if (rightMoving) { newW = cur.X - _startX; newX = _startX; }
+            else { newW = _startW; newX = _startX; }
 
-            item.LayerScale = scale;
-            item.X = leftMoving ? _fixedX - newW : _fixedX;
-            item.Y = topMoving ? _fixedY - newH : _fixedY;
+            double newH, newY;
+            if (topMoving) { newH = bottomEdge - cur.Y; newY = cur.Y; }
+            else if (bottomMoving) { newH = cur.Y - _startY; newY = _startY; }
+            else { newH = _startH; newY = _startY; }
+
+            // Clamp to a minimum size while keeping the anchored edge fixed.
+            if (newW < MinSize) { newW = MinSize; if (leftMoving) newX = rightEdge - MinSize; }
+            if (newH < MinSize) { newH = MinSize; if (topMoving) newY = bottomEdge - MinSize; }
+
+            item.LayerWidth = Math.Round(newW);
+            item.LayerHeight = Math.Round(newH);
+            item.X = newX;
+            item.Y = newY;
         }
 
         e.Handled = true;
@@ -371,26 +418,58 @@ public partial class DesignCanvasControl : UserControl
         if (_activeLayer == item)
         {
             container.ReleaseMouseCapture();
+            var wasResizing = _mode == Mode.Resizing;
             _mode = Mode.None;
-            _resizeCorner = Corner.None;
+            _resizeHandle = ResizeHandle.None;
             _activeLayer = null;
+
+            RecordGesture(item, wasResizing);
             item.NotifyTransformChanged();
         }
         e.Handled = true;
     }
 
-    private static Corner HitCorner(Point local, double width, double height)
+    private void RecordGesture(LayerItemViewModel item, bool wasResizing)
+    {
+        if (History == null) return;
+        var t = item.Layer.Transform;
+        if (t == null) return;
+
+        int oldW = (int)Math.Round(_startW);
+        int oldH = (int)Math.Round(_startH);
+        double newX = t.X, newY = t.Y;
+        int newW = t.Width ?? oldW;
+        int newH = t.Height ?? oldH;
+
+        bool moved = Math.Abs(newX - _startX) > 0.5 || Math.Abs(newY - _startY) > 0.5;
+        bool resized = wasResizing && (newW != oldW || newH != oldH);
+        if (!moved && !resized) return;
+
+        // Execute re-applies the (already-set) new values and pushes an undo entry.
+        History.Execute(new TransformLayerCommand(
+            item.Layer, _startX, _startY, oldW, oldH, newX, newY, newW, newH));
+    }
+
+    private static ResizeHandle HitHandle(Point local, double width, double height)
     {
         bool left = local.X <= HandleHit;
         bool right = local.X >= width - HandleHit;
         bool top = local.Y <= HandleHit;
         bool bottom = local.Y >= height - HandleHit;
 
-        if (left && top) return Corner.TopLeft;
-        if (right && top) return Corner.TopRight;
-        if (left && bottom) return Corner.BottomLeft;
-        if (right && bottom) return Corner.BottomRight;
-        return Corner.None;
+        // Corners take priority over edges.
+        if (left && top) return ResizeHandle.TopLeft;
+        if (right && top) return ResizeHandle.TopRight;
+        if (left && bottom) return ResizeHandle.BottomLeft;
+        if (right && bottom) return ResizeHandle.BottomRight;
+
+        // Edges (dragging any point along a side, away from the corners).
+        if (left) return ResizeHandle.Left;
+        if (right) return ResizeHandle.Right;
+        if (top) return ResizeHandle.Top;
+        if (bottom) return ResizeHandle.Bottom;
+
+        return ResizeHandle.None;
     }
 
     // ---- Styling ------------------------------------------------------------------

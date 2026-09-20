@@ -64,16 +64,30 @@ public sealed partial class LayerItemViewModel : ObservableObject
         }
     }
 
-    /// <summary>Optional explicit width (px). 0 means "not set".</summary>
+    /// <summary>Explicit box width in px (independent of height). Ignored when locked.</summary>
     public double LayerWidth
     {
         get => Layer.Transform?.Width ?? 0;
         set
         {
             if (Layer.Transform == null || IsLocked) return;
-            var w = (int)Math.Max(0, value);
+            var w = (int)Math.Max(1, value);
             if ((Layer.Transform.Width ?? 0) == w) return;
-            Layer.Transform.Width = w == 0 ? null : w;
+            Layer.Transform.Width = w;
+            OnPropertyChanged();
+        }
+    }
+
+    /// <summary>Explicit box height in px (independent of width). Ignored when locked.</summary>
+    public double LayerHeight
+    {
+        get => Layer.Transform?.Height ?? 0;
+        set
+        {
+            if (Layer.Transform == null || IsLocked) return;
+            var h = (int)Math.Max(1, value);
+            if ((Layer.Transform.Height ?? 0) == h) return;
+            Layer.Transform.Height = h;
             OnPropertyChanged();
         }
     }
@@ -88,6 +102,7 @@ public sealed partial class LayerItemViewModel : ObservableObject
         OnPropertyChanged(nameof(Y));
         OnPropertyChanged(nameof(LayerScale));
         OnPropertyChanged(nameof(LayerWidth));
+        OnPropertyChanged(nameof(LayerHeight));
     }
 
     public string DisplayName

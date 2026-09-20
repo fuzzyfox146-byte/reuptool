@@ -3,12 +3,16 @@ using System.IO;
 using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using VideoAutoTool.Core.Design;
 using VideoAutoTool.Core.Templates;
 
 namespace VideoAutoTool.App.ViewModels;
 
 public sealed partial class DesignViewModel : ObservableObject
 {
+    /// <summary>Undo/redo history for canvas edits (drag/resize).</summary>
+    public DesignHistory History { get; } = new();
+
     [ObservableProperty]
     private string _status = "Sẵn sàng thiết kế";
 
@@ -57,6 +61,20 @@ public sealed partial class DesignViewModel : ObservableObject
             Name = "Text cố định",
             Transform = new TransformSettings { X = 50, Y = 650, Scale = 1.0 }
         }));
+    }
+
+    [RelayCommand]
+    private void Undo()
+    {
+        History.Undo();
+        Status = History.CanUndo ? "Đã hoàn tác (Ctrl+Z)" : "Đã hoàn tác - không còn bước trước";
+    }
+
+    [RelayCommand]
+    private void Redo()
+    {
+        History.Redo();
+        Status = "Đã làm lại (Ctrl+Shift+Z)";
     }
 
     [RelayCommand]
