@@ -10,6 +10,7 @@ using VideoAutoTool.Core.Templates;
 using VideoAutoTool.Core.Validation;
 using VideoAutoTool.Core.Cache;
 using VideoAutoTool.App.ViewModels;
+using VideoAutoTool.App.Services;
 
 namespace VideoAutoTool.App;
 
@@ -60,6 +61,8 @@ public partial class App : Application
         services.AddTransient<AssBuilder>();
         services.AddTransient<JobRenderer>();
         services.AddTransient<JobRendererAdapter>();
+
+        services.AddSingleton<IUiDialogs, WpfUiDialogs>();
 
         // ViewModels
         services.AddTransient<MainViewModel>();

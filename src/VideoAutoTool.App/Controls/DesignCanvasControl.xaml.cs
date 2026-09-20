@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using VideoAutoTool.App.ViewModels;
 using VideoAutoTool.Core.Design;
@@ -130,6 +131,9 @@ public partial class DesignCanvasControl : UserControl
                 if (_visuals.TryGetValue(item, out var v)) UpdateContainerGeometry(v);
                 break;
             case nameof(LayerItemViewModel.IsVisible):
+            case nameof(LayerItemViewModel.PreviewText):
+            case nameof(LayerItemViewModel.PreviewColor):
+            case nameof(LayerItemViewModel.PreviewFontSize):
                 RenderLayers();
                 break;
             case nameof(LayerItemViewModel.IsSelected):
@@ -190,9 +194,7 @@ public partial class DesignCanvasControl : UserControl
         foreach (var item in Layers)
         {
             if (!item.IsVisible) continue;
-            var t = item.Layer.Transform;
-            if (t == null) continue;
-
+            var t = item.Layer.Transform ??= new TransformSettings();
             var style = GetStyle(item.Layer.Type);
             var scale = t.Scale <= 0 ? 1.0 : t.Scale;
 
@@ -201,17 +203,26 @@ public partial class DesignCanvasControl : UserControl
             t.Width ??= (int)Math.Round(style.BaseWidth * scale);
             t.Height ??= (int)Math.Round(style.BaseHeight * scale);
 
+            var hasMedia = !string.IsNullOrWhiteSpace(item.PreviewImagePath)
+                || !string.IsNullOrWhiteSpace(item.PreviewVideoPath)
+                || !string.IsNullOrWhiteSpace(item.PreviewText);
+
             var container = new Border
             {
                 Width = Math.Max(MinSize, t.Width.Value),
                 Height = Math.Max(MinSize, t.Height.Value),
-                Background = style.Fill,
+                Background = hasMedia ? Brushes.Transparent : style.Fill,
                 BorderBrush = style.Stroke,
                 BorderThickness = new Thickness(2),
                 Cursor = Cursors.SizeAll
             };
 
             var grid = new Grid();
+            var preview = CreatePreviewContent(item);
+            if (preview != null)
+            {
+                grid.Children.Add(preview);
+            }
 
             var label = new TextBlock
             {
@@ -264,6 +275,86 @@ public partial class DesignCanvasControl : UserControl
         }
 
         UpdateSelectionVisuals();
+    }
+
+    private static UIElement? CreatePreviewContent(LayerItemViewModel item)
+    {
+        if (!string.IsNullOrWhiteSpace(item.PreviewImagePath) && File.Exists(item.PreviewImagePath))
+        {
+            try
+            {
+                var bmp = new BitmapImage();
+                bmp.BeginInit();
+                bmp.CacheOption = BitmapCacheOption.OnLoad;
+                bmp.UriSource = new Uri(item.PreviewImagePath, UriKind.Absolute);
+                bmp.EndInit();
+                bmp.Freeze();
+                return new Image
+                {
+                    Source = bmp,
+                    Stretch = Stretch.UniformToFill,
+                    IsHitTestVisible = false
+                };
+            }
+            catch
+            {
+                // Fall through to other preview types.
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(item.PreviewVideoPath) && File.Exists(item.PreviewVideoPath))
+        {
+            var media = new MediaElement
+            {
+                Source = new Uri(item.PreviewVideoPath, UriKind.Absolute),
+                LoadedBehavior = MediaState.Play,
+                UnloadedBehavior = MediaState.Manual,
+                IsMuted = true,
+                Stretch = Stretch.Fill,
+                ScrubbingEnabled = true,
+                IsHitTestVisible = false
+            };
+            media.MediaEnded += (_, _) =>
+            {
+                media.Position = TimeSpan.Zero;
+                media.Play();
+            };
+            return media;
+        }
+
+        if (!string.IsNullOrWhiteSpace(item.PreviewText))
+        {
+            return new TextBlock
+            {
+                Text = item.PreviewText,
+                TextWrapping = TextWrapping.Wrap,
+                TextAlignment = TextAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                FontSize = item.PreviewFontSize,
+                FontWeight = FontWeights.Bold,
+                Foreground = ParseBrush(item.PreviewColor),
+                Margin = new Thickness(12),
+                IsHitTestVisible = false
+            };
+        }
+
+        return null;
+    }
+
+    private static Brush ParseBrush(string color)
+    {
+        try
+        {
+            var converted = ColorConverter.ConvertFromString(color);
+            if (converted is Color c) return new SolidColorBrush(c);
+        }
+        catch
+        {
+            // ignore invalid hex
+        }
+
+        return Brushes.Gold;
     }
 
     private static Rectangle CreateHandle(HorizontalAlignment h, VerticalAlignment v, Cursor cursor)

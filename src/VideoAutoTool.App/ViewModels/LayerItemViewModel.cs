@@ -24,13 +24,29 @@ public sealed partial class LayerItemViewModel : ObservableObject
     [ObservableProperty]
     private bool _isSelected;
 
+    /// <summary>Optional still image shown on the design canvas (avatar / static).</summary>
+    public string? PreviewImagePath { get; set; }
+
+    /// <summary>Optional looping video shown on the design canvas (soundwave).</summary>
+    public string? PreviewVideoPath { get; set; }
+
+    [ObservableProperty]
+    private string? _previewText;
+
+    [ObservableProperty]
+    private string _previewColor = "#F5A623";
+
+    [ObservableProperty]
+    private int _previewFontSize = 28;
+
     /// <summary>X position on the canvas. Ignored when the layer is locked.</summary>
     public double X
     {
         get => Layer.Transform?.X ?? 0;
         set
         {
-            if (Layer.Transform == null || IsLocked) return;
+            Layer.Transform ??= new TransformSettings();
+            if (IsLocked) return;
             if (Math.Abs(Layer.Transform.X - value) < 0.001) return;
             Layer.Transform.X = value;
             OnPropertyChanged();
@@ -43,7 +59,8 @@ public sealed partial class LayerItemViewModel : ObservableObject
         get => Layer.Transform?.Y ?? 0;
         set
         {
-            if (Layer.Transform == null || IsLocked) return;
+            Layer.Transform ??= new TransformSettings();
+            if (IsLocked) return;
             if (Math.Abs(Layer.Transform.Y - value) < 0.001) return;
             Layer.Transform.Y = value;
             OnPropertyChanged();
@@ -56,7 +73,8 @@ public sealed partial class LayerItemViewModel : ObservableObject
         get => Layer.Transform?.Scale ?? 1.0;
         set
         {
-            if (Layer.Transform == null || IsLocked) return;
+            Layer.Transform ??= new TransformSettings();
+            if (IsLocked) return;
             var clamped = Math.Max(0.1, value);
             if (Math.Abs(Layer.Transform.Scale - clamped) < 0.0001) return;
             Layer.Transform.Scale = clamped;
@@ -70,7 +88,8 @@ public sealed partial class LayerItemViewModel : ObservableObject
         get => Layer.Transform?.Width ?? 0;
         set
         {
-            if (Layer.Transform == null || IsLocked) return;
+            Layer.Transform ??= new TransformSettings();
+            if (IsLocked) return;
             var w = (int)Math.Max(1, value);
             if ((Layer.Transform.Width ?? 0) == w) return;
             Layer.Transform.Width = w;
@@ -84,7 +103,8 @@ public sealed partial class LayerItemViewModel : ObservableObject
         get => Layer.Transform?.Height ?? 0;
         set
         {
-            if (Layer.Transform == null || IsLocked) return;
+            Layer.Transform ??= new TransformSettings();
+            if (IsLocked) return;
             var h = (int)Math.Max(1, value);
             if ((Layer.Transform.Height ?? 0) == h) return;
             Layer.Transform.Height = h;
@@ -124,6 +144,8 @@ public sealed partial class LayerItemViewModel : ObservableObject
             };
         }
     }
+
+    public bool IsTextLayer => Layer.Type is LayerType.Subtitle or LayerType.FixedText;
 
     public LayerItemViewModel(LayerDefinition layer)
     {

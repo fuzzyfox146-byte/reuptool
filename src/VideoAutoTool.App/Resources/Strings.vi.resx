@@ -15,4 +15,13 @@
   <data name="AppTitle" xml:space="preserve">
     <value>Video Auto Tool</value>
   </data>
+  <data name="BrowseFolder" xml:space="preserve">
+    <value>Duyệt...</value>
+  </data>
+  <data name="ImportFont" xml:space="preserve">
+    <value>Import font (.ttf/.otf)</value>
+  </data>
+  <data name="ScanFolders" xml:space="preserve">
+    <value>Quét folder</value>
+  </data>
 </root>

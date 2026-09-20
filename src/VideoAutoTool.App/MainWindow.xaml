@@ -20,7 +20,7 @@
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="200"/>
                         <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="250"/>
+                        <ColumnDefinition Width="300"/>
                     </Grid.ColumnDefinitions>
 
                     <!-- Layer List -->
@@ -122,6 +122,43 @@
                                 <TextBlock Text="Kéo góc/cạnh trên canvas để đổi rộng &amp; cao độc lập." 
                                            FontSize="11" Foreground="#FF9E9E9E" TextWrapping="Wrap" Margin="2,4,2,5"/>
 
+                                <StackPanel Visibility="{Binding DesignViewModel.IsTextStyleVisible, Converter={StaticResource BoolToVis}}">
+                                    <Separator Margin="0,10"/>
+                                    <TextBlock Text="Kiểu chữ (Style)" FontWeight="Bold" Margin="0,5,0,6"/>
+                                    <ComboBox ItemsSource="{Binding DesignViewModel.StylePresets}"
+                                              SelectedItem="{Binding DesignViewModel.SelectedStylePreset}"
+                                              DisplayMemberPath="DisplayName" Margin="0,0,0,8"/>
+                                    <TextBlock Text="Font" Margin="0,0,0,2"/>
+                                    <ComboBox ItemsSource="{Binding DesignViewModel.FontOptions}"
+                                              SelectedItem="{Binding DesignViewModel.SelectedFontOption}"
+                                              DisplayMemberPath="DisplayLabel" Margin="0,0,0,6"/>
+                                    <Button Content="Import font (.ttf/.otf)" Command="{Binding DesignViewModel.ImportFontCommand}" Margin="0,0,0,8"/>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="70"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+                                        <Label Grid.Row="0" Grid.Column="0" Content="Cỡ:" VerticalAlignment="Center"/>
+                                        <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding DesignViewModel.SelectedStylePreset.Size, UpdateSourceTrigger=PropertyChanged}" Margin="2"/>
+                                        <CheckBox Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Content="Đậm (Bold)" IsChecked="{Binding DesignViewModel.SelectedStylePreset.Bold}" Margin="2,4"/>
+                                        <Label Grid.Row="2" Grid.Column="0" Content="Màu:" VerticalAlignment="Center"/>
+                                        <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding DesignViewModel.SelectedStylePreset.Color, UpdateSourceTrigger=PropertyChanged}" Margin="2"/>
+                                        <Label Grid.Row="3" Grid.Column="0" Content="Viền:" VerticalAlignment="Center"/>
+                                        <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding DesignViewModel.SelectedStylePreset.OutlineColor, UpdateSourceTrigger=PropertyChanged}" Margin="2"/>
+                                        <Label Grid.Row="4" Grid.Column="0" Content="Độ viền:" VerticalAlignment="Center"/>
+                                        <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding DesignViewModel.SelectedStylePreset.Outline, UpdateSourceTrigger=PropertyChanged}" Margin="2"/>
+                                    </Grid>
+                                    <TextBlock Text="Chọn layer Phụ đề hoặc Text cố định để sửa style. Màu dạng #RRGGBB."
+                                               FontSize="11" Foreground="#FF9E9E9E" TextWrapping="Wrap" Margin="2,6,2,0"/>
+                                </StackPanel>
+
                                 <Separator Margin="0,10"/>
                                 <TextBlock Text="Trạng thái:" FontWeight="Bold" Margin="0,5,0,2"/>
                                 <TextBlock Text="{Binding DesignViewModel.Status}" TextWrapping="Wrap" Margin="5"/>
@@ -138,26 +175,55 @@
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                         <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="180"/>
                     </Grid.RowDefinitions>
 
                     <StackPanel Grid.Row="0">
-                        <TextBlock Text="Nguồn &amp; Kiểm tra" FontSize="20" FontWeight="Bold" Margin="0,0,0,16"/>
-                        <Label Content="Thư mục gốc:"/>
+                        <TextBlock Text="Nguồn &amp; Kiểm tra" FontSize="20" FontWeight="Bold" Margin="0,0,0,12"/>
+                        <TextBlock Text="Chọn thư mục gốc bằng Duyệt. Tool chỉ liệt kê folder theo vai trò render, đếm file tầng trên — không đọc hết nội dung bên trong."
+                                   TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,8"/>
                         <Grid Margin="0,0,0,8">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <TextBox Text="{Binding SourceViewModel.RootFolder, UpdateSourceTrigger=PropertyChanged}" 
-                                     Grid.Column="0" 
-                                     ToolTip="Nhập đường dẫn folder (ví dụ: D:\videos\drivers)"/>
+                            <TextBox Text="{Binding SourceViewModel.RootFolder, UpdateSourceTrigger=PropertyChanged}"
+                                     IsReadOnly="True"
+                                     ToolTip="Chọn bằng nút Duyệt"/>
+                            <Button Grid.Column="1" Content="Duyệt..." Margin="8,0,0,0" Padding="12,4"
+                                    Command="{Binding SourceViewModel.BrowseRootCommand}"/>
                         </Grid>
-                        <Button Content="Quét và Kiểm tra" Margin="0,0,0,8" HorizontalAlignment="Left" 
-                                Command="{Binding SourceViewModel.ScanCommand}"/>
-                        <TextBlock Text="{Binding SourceViewModel.Status}" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,16"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                            <Button Content="Quét folder" Margin="0,0,8,0"
+                                    Command="{Binding SourceViewModel.RefreshFolderStatsCommand}"/>
+                            <Button Content="Kiểm tra sâu (ffprobe)"
+                                    Command="{Binding SourceViewModel.ValidateDeepCommand}"/>
+                        </StackPanel>
+                        <TextBlock Text="{Binding SourceViewModel.Status}" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,12"/>
                     </StackPanel>
 
-                    <DataGrid Grid.Row="1" ItemsSource="{Binding SourceViewModel.ValidationMessages}" 
-                              AutoGenerateColumns="False" IsReadOnly="True" Margin="0,0,0,16">
+                    <DataGrid Grid.Row="1" ItemsSource="{Binding SourceViewModel.Folders}"
+                              AutoGenerateColumns="False" IsReadOnly="True" Margin="0,0,0,12">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Sẵn sàng" Binding="{Binding ReadyMark}" Width="80"/>
+                            <DataGridTextColumn Header="Vai trò" Binding="{Binding RoleLabel}" Width="180"/>
+                            <DataGridTextColumn Header="Dùng" Binding="{Binding RenderMark}" Width="80"/>
+                            <DataGridTextColumn Header="Loại file" Binding="{Binding ExtensionsLabel}" Width="160"/>
+                            <DataGridTextColumn Header="Số file" Binding="{Binding FileCount}" Width="70"/>
+                            <DataGridTextColumn Header="Thư mục" Binding="{Binding FolderPath}" Width="*"/>
+                            <DataGridTemplateColumn Header="" Width="90">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Button Content="Duyệt..." Command="{Binding BrowseCommand}" Padding="8,2"/>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <TextBlock Grid.Row="2" Text="Kết quả kiểm tra sâu" FontWeight="Bold" Margin="0,0,0,6"/>
+                    <DataGrid Grid.Row="3" ItemsSource="{Binding SourceViewModel.ValidationMessages}"
+                              AutoGenerateColumns="False" IsReadOnly="True">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Level" Binding="{Binding Level}" Width="80"/>
                             <DataGridTextColumn Header="Code" Binding="{Binding Code}" Width="80"/>

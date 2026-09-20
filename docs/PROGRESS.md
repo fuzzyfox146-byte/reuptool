@@ -1,8 +1,8 @@
 # PROGRESS - handoff log (agent: read first, update at the end of every task)
 
 ## Current state
-- Milestone: **M7 improved v8 + undo/redo** (Version 1.0.5). All tests passing!
-- Latest: Wired **Undo/Redo** into the design canvas (Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y + buttons). Each drag or resize gesture = one undo step via new `TransformLayerCommand`. Bumped to 1.0.5, exe published.
+- Milestone: **M7 sample canvas preview** (Version 1.0.7). All tests passing.
+- Latest: Design canvas now shows **real sample media** from `mẫu/`: avatar.png, Sound wave.mov, first cue of the sample SRT. Layers without Transform (Sub/Background) are given boxes so they no longer disappear.
 
 ## Done
 - SPEC: preset.box, font bundled/import, `[music]` kept, E030 always Error.
@@ -19,6 +19,7 @@
   - **NEW v5 (2026-09-20)**: Edge resize (v1.0.3) — Renamed `Corner` enum → `ResizeHandle` and added `Left/Right/Top/Bottom`. Selected layer now shows 8 white handles (4 corners + 4 mid-edges). `HitHandle` checks corners first then edges. Cursor feedback: SizeWE on left/right edges, SizeNS on top/bottom.
   - **NEW v6 (2026-09-20)**: Non-uniform resize (v1.0.4) — Added `int? Height` to `TransformSettings` (render ignores it; only `Scale`/`Width` were ever used, so no regression; 74 tests still green). `LayerItemViewModel` now exposes `LayerWidth`/`LayerHeight` px proxies. Canvas draws each box from explicit `Transform.Width`/`Height` (initialized once from `base*Scale` for old data), and resize sets W/H **independently**: corners change both, Left/Right change only width, Top/Bottom change only height. The opposite edge stays anchored; min size 10px. Property panel replaced the Scale slider with **Rộng(W)** + **Cao(H)** text boxes (two-way, live-synced). NOTE: design W/H is layout-only; mapping to actual ffmpeg render sizes (avatar Scale, wave Width) is still TODO.
   - **NEW v7 (2026-09-20)**: Undo/Redo (v1.0.5) — Added `TransformLayerCommand` (X/Y/Width/Height, `CanMergeWith=>false`) in Core. `DesignViewModel` owns a `DesignHistory` + `UndoCommand`/`RedoCommand`. Canvas got a `History` DP (bound to `DesignViewModel.History`); it captures the box at mouse-down and, on mouse-up, records ONE `TransformLayerCommand` per gesture if the layer actually moved/resized. Subscribes to `DesignHistory.Changed` → re-renders + refreshes panel after any execute/undo/redo. Key bindings in `MainWindow`: Ctrl+Z=Undo, Ctrl+Shift+Z & Ctrl+Y=Redo; plus ↶/↷ buttons in the layer panel. 74 tests still green.
+  - **NEW v8 (2026-09-20)**: Text style + source folders (v1.0.6) — `SourceFolderInventory` lists template slots (driver/layers/output) and `FileScanner.CountMatchingFiles` counts **top-level only**. Source tab: Browse folder dialog (`IUiDialogs`/`OpenFolderDialog`), table of roles used for render, ✅ when folder exists and has matching files. Design: style panel for Subtitle/FixedText (preset, font combo from `FontCatalog`, Import font, size/bold/hex colors/outline). 78 tests.
 - M8 (done): `AutoModeService` (FileSystemWatcher, 10s stability, video+SRT detection), `dotnet publish` (self-contained exe), README.md tiếng Việt (cài đặt, hướng dẫn, troubleshooting). **Skipped**: error message audit (time-consuming), acceptance tests §16 (need real ffmpeg + long testdata).
 
 ## Decisions
@@ -36,7 +37,7 @@
 ## Open issues / risks
 - NVENC smoke test chưa chạy.
 - Benchmark thật chưa chạy (infrastructure ready: `vat bench --root testdata/... --index 0`, cần long testdata + ffmpeg).
-- M6 chỉ là skeleton - chưa có: validation results grid, queue job list/controls, folder browse dialogs, ffmpeg detection, etc.
+- M6 chỉ là skeleton - queue job list/controls, ffmpeg detection still incomplete. Source folder browse + role table DONE in v1.0.6.
 - M7 còn thiếu (optional): instant preview (proxy images/thumbnails), exact preview (ffmpeg), add new layer button, delete layer button. (Selection highlight + corner resize handles DONE in v1.0.2.)
 
 ## Measurements

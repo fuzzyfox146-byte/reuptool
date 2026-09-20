@@ -38,6 +38,22 @@ public static class FileScanner
         return files;
     }
 
+    /// <summary>
+    /// Counts matching files in a folder without reading file contents
+    /// and without walking subfolders (TopDirectoryOnly).
+    /// </summary>
+    public static int CountMatchingFiles(string folder, IEnumerable<string> extensions)
+    {
+        if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder))
+        {
+            return 0;
+        }
+
+        var extSet = new HashSet<string>(extensions.Select(NormalizeExtension), StringComparer.OrdinalIgnoreCase);
+        return Directory.EnumerateFiles(folder, "*", SearchOption.TopDirectoryOnly)
+            .Count(path => ShouldInclude(path, extSet));
+    }
+
     public static string ResolveFolder(string root, string folder)
     {
         if (Path.IsPathRooted(folder))
