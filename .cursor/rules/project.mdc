@@ -1,0 +1,51 @@
+---
+description: Core rules for Video Auto Tool (always applied). Keep this file short.
+alwaysApply: true
+---
+
+# Video Auto Tool (VAT) - project rules
+
+## What this is
+Windows desktop app (C# / .NET 8 / WPF) that batch-produces videos with ffmpeg from a designed template:
+audio from source videos + looping backgrounds + avatar + soundwave + burned-in subtitles.
+Full spec: `docs/SPEC.md` (read ONLY the sections relevant to the current task, do not load the whole file).
+Handoff/progress log: `docs/PROGRESS.md` (READ IT FIRST in every new chat; UPDATE IT at the end of every task).
+
+## Language
+- Reply to the user in Vietnamese. Keep answers short and concrete.
+- Code, identifiers, code comments, commit messages, log messages: English.
+- User-facing UI strings: Vietnamese, kept in `Resources/Strings.vi.resx` (never hard-coded in XAML/code-behind).
+
+## Stack (do not add packages without asking)
+- .NET 8, C# 12, `<Nullable>enable</Nullable>`, `<TreatWarningsAsErrors>true</TreatWarningsAsErrors>` for Core.
+- WPF + CommunityToolkit.Mvvm (MVVM). System.Text.Json. xUnit for tests. SkiaSharp (tests and text measuring).
+- FFmpeg is an EXTERNAL executable (ffmpeg.exe / ffprobe.exe). Never link ffmpeg libraries.
+
+## Solution layout
+- `src/VideoAutoTool.Core`  - all logic, ZERO UI references.
+- `src/VideoAutoTool.Cli`   - console front-end (`vat`) used to test Core headless.
+- `src/VideoAutoTool.App`   - WPF UI only. No business logic in code-behind.
+- `tests/VideoAutoTool.Core.Tests` - xUnit tests. `scripts/` - PowerShell helpers. `testdata/` - generated, git-ignored.
+
+## Commands
+- Build: `dotnet build`  |  Test: `dotnet test`
+- CLI: `dotnet run --project src/VideoAutoTool.Cli -- <command>`
+- Test data: `pwsh scripts/make-testdata.ps1`
+
+## Coding rules
+- Every long operation is `async` with `CancellationToken` and `IProgress<T>`. Never block the UI thread.
+- Call external processes ONLY through `FfmpegRunner` using `ProcessStartInfo.ArgumentList` (never a joined command string).
+- Must work with paths containing spaces, emoji and Vietnamese characters. Use `Path.Combine`; no hard-coded absolute paths.
+- Deterministic planning: same inputs => same plan (no `DateTime.Now`/unseeded random in planning).
+- Errors: return typed results / throw specific exceptions; never swallow exceptions silently. Log through `ILog`.
+- Keep diffs small and focused. Do NOT refactor unrelated code. Ask before changing architecture or adding a package.
+- Prefer pointing to canonical examples in the repo over inventing new patterns.
+
+## Definition of done (for every task)
+1. `dotnet build` has 0 warnings/errors and `dotnet test` passes - actually RUN them, never claim success without running.
+2. New public Core behavior has unit tests (see acceptance criteria in the task).
+3. `docs/PROGRESS.md` updated (what was done, decisions, open issues, next step).
+4. Final message to the user: what changed, how to try it (exact command), what is NOT done or unverified.
+
+## FFmpeg work
+Read `.cursor/rules/ffmpeg.mdc` before touching render/preview/cache code (it loads automatically for those folders).

@@ -1,0 +1,87 @@
+---
+description: FFmpeg render pipeline - verified filter graph, invocation rules, pitfalls. Read when touching render, preview, cache or ffmpeg code.
+globs: src/VideoAutoTool.Core/Render/**/*.cs,src/VideoAutoTool.Core/Cache/**/*.cs,src/VideoAutoTool.Core/Preview/**/*.cs
+alwaysApply: false
+---
+
+# FFmpeg rules for VAT
+
+Status legend: [VERIFIED] = run successfully on synthetic test data (ffmpeg 6.1, libx264, Linux) before this spec was written.
+[UNVERIFIED] = design proposal, must be proven by a test before relying on it.
+
+## Invocation
+- `ProcessStartInfo`: `UseShellExecute=false`, `CreateNoWindow=true`, redirect stdout+stderr, UTF-8 encodings, use `ArgumentList`.
+- Read stdout AND stderr concurrently (avoid pipe deadlock). Keep the last 25 non-progress lines for error reports.
+- Run every job with `WorkingDirectory = <per-job temp dir>`. Therefore EVERY input/output path passed to ffmpeg MUST be absolute.
+  (Bug found in prototype: a relative output path was resolved inside the temp dir and then deleted.)
+- Per-job temp dir contains `sub.ass` and optional `fonts/`. Delete it in `finally`.
+- Reference the ASS file by RELATIVE name: `ass=filename=sub.ass` (and `:fontsdir=fonts`). Never pass absolute Windows paths inside a
+  filter (drive-letter colon and backslashes need fragile escaping).
+- Always add: `-y -hide_banner -loglevel warning -nostdin`. For renders also `-progress pipe:1 -nostats`; parse `out_time_us`
+  (microseconds) / total duration for percent.
+- Write to `<final>.mp4.part` with `-f mp4`, then move over the final name on success. On failure/cancel delete the `.part`.
+- Cancel = kill the process tree, then delete `.part`.
+
+## Timing
+- D (job duration) = duration of the FIRST AUDIO STREAM of the source (fallback: container duration). Output gets `-t D`.
+- Only `-map 0:a:0` for audio. Never map audio of backgrounds (their voice must never appear).
+- Everything is normalized to canvas WxH and fps F with `fps=F` on each input so the graph is constant frame rate.
+
+## Baseline filter graph [VERIFIED]
+Inputs: `0`=source (audio only), `1..K`=background segments, then avatar image, then soundwave.
+```
+color=c=black:s=WxH:r=F:d=D,format=gbrp[base]
+[k:v]trim=duration=SEG,setpts=PTS-STARTPTS,fps=F,
+   scale=w='trunc(max(W/iw,H/ih)*iw*S/2)*2':h='trunc(max(W/iw,H/ih)*ih*S/2)*2':flags=bicubic,
+   crop=w='min(iw,W)':h='min(ih,H)',pad=W:H:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[sK]
+[s0][s1]...concat=n=K:v=1:a=0[bgcat]            (K==1: [s0]copy[bgcat])
+[bgcat]format=rgba,colorchannelmixer=aa=OPACITY[bga]
+[base][bga]overlay=eof_action=repeat:format=gbrp[L1]
+[A:v]fps=F,trim=duration=D,setpts=PTS-STARTPTS,format=rgba,scale=w=AW:h=AH:force_original_aspect_ratio=decrease[av]
+[L1][av]overlay=x='EXPR':y='EXPR':eof_action=repeat:format=gbrp[L2]
+[Wv:v]fps=F,trim=duration=D,setpts=PTS-STARTPTS,format=rgba,scale=w=WW:h=-2:flags=bicubic[wv]
+[L2][wv]overlay=x='EXPR':y='EXPR':eof_action=repeat:format=gbrp[L3]
+[L3]ass=filename=sub.ass[L4]
+[L4]scale=out_color_matrix=bt709:out_range=tv:flags=accurate_rnd+full_chroma_int,format=yuv420p[vout]
+```
+- S = background scale factor. "cover" mode: 1.0 fills the canvas exactly; 1.5 = 150 % of that (centre-cropped).
+- Segment durations: all full length except the last, which is `remaining`. Backgrounds are chained by the planner, not by ffmpeg.
+- Opacity over black was measured: mean luma ratio 0.604 for OPACITY=0.6 (expected 0.6).
+- Overlay `x`/`y` expressions use `W,H` (main) and `w,h` (overlay); they may be negative or exceed the canvas (overflow is cropped by overlay).
+- Looping inputs: avatar `-loop 1 -framerate F -i img`; soundwave `-stream_loop -1 -i wave.mov`; both bounded by `trim=duration=D`.
+- Soundwave with black background instead of alpha: insert `lumakey=threshold=0:tolerance=T:softness=T` after `format=rgba` (T ~ 0.12-0.15) [VERIFIED].
+- Soundwave with alpha: QuickTime `qtrle`/ProRes 4444 `.mov` decoded to rgba works [VERIFIED].
+- Layer opacity other than 1.0 on avatar/wave: append `colorchannelmixer=aa=X` after `format=rgba` [VERIFIED for wave].
+- Order of layers in the template (bottom -> top) = order of overlays.
+
+## Encoders
+- CPU [VERIFIED]: `-c:v libx264 -preset medium -crf Q -profile:v high`
+- NVIDIA [UNVERIFIED, no GPU on the machine where this was written]: `-c:v h264_nvenc -preset p5 -rc vbr -cq Q -b:v 0 -profile:v high`
+- Detect NVENC by a tiny test encode (`-f lavfi -i color=c=black:s=256x256:d=0.2 -c:v h264_nvenc -f null -`); exit code 0 => usable; else libx264.
+  Cache the detection result per ffmpeg path.
+- Tags: `-colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv -movflags +faststart`
+- Audio: `-map 0:a:0 -c:a aac -b:a 192k -ar 48000`
+
+## Preview frame [VERIFIED]
+Build the SAME graph with D reduced to `t + 0.5`, then output-side `-ss t -frames:v 1`, finish with
+`scale=800:-2:flags=bicubic,format=rgb24[vout]` and write PNG. Do not map audio.
+
+## Cache (freeze) [UNVERIFIED - must be proven in the cache milestone]
+Idea: prepare each background ONCE at canvas size with the opacity baked in (opacity over black == multiply RGB by opacity:
+`format=gbrp,colorchannelmixer=rr=O:gg=O:bb=O`), store as H.264 with identical parameters, then feed the render ONE input via the
+concat demuxer (`-f concat -safe 0 -i list.txt`) and use it directly as the base layer (`trim=duration=D`). This avoids opening
+dozens of inputs for 30-40 minute videos. Prove: equal look to the baseline (luma ratio test), identical duration, faster.
+
+## Text / ASS [VERIFIED]
+- Generate an ASS file per job (PlayResX/Y = canvas, `WrapStyle: 2`, `ScaledBorderAndShadow: yes`), position each line with
+  `{\anN\pos(x,y)}`, wrap by inserting `\N` yourself. Colors are `&H00BBGGRR`.
+- Time format `H:MM:SS.cc`. Strip HTML-like tags from SRT text. Strip emoji from titles taken from file names.
+- Font must be an installed font family name (or a font file copied into `fonts/` and the family name typed by the user).
+
+## Pitfalls already found
+1. Relative output path + custom cwd => file lost. Always absolute.
+2. Emoji in file names are fine when passed via `ArgumentList`; but never put such names inside a filter string.
+3. SRT files may be UTF-8 with BOM; also try UTF-16 and CP1258 before Latin-1.
+4. `pad` after `crop` is required, otherwise scale < 1.0 leaves the wrong size.
+5. Source videos are shorter/longer than backgrounds: NEVER assume; the planner chains backgrounds until `total >= D - 0.02`.
+6. Concat of segments needs equal fps/size/sar: hence `fps=F`, `setsar=1`, and `pad` on every segment.

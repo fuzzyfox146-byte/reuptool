@@ -1,0 +1,23 @@
+## .NET / VS
+bin/
+obj/
+.vs/
+*.user
+*.suo
+publish/
+TestResults/
+## Project
+testdata/
+cache/
+*.part
+## Media
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.webm
+*.wav
+*.mp3
+## OS
+Thumbs.db
+.DS_Store

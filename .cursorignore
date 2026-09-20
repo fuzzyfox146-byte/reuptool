@@ -1,0 +1,14 @@
+bin/
+obj/
+.vs/
+testdata/
+cache/
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.webm
+*.wav
+*.mp3
+*.part
+publish/
