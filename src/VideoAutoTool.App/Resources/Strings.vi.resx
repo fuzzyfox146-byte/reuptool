@@ -54,4 +54,16 @@
   <data name="FfmpegBundledHint" xml:space="preserve">
     <value>FFmpeg đi kèm app (thư mục tools\ffmpeg cạnh file .exe). Không cần cài PATH.</value>
   </data>
+  <data name="ParallelJobs" xml:space="preserve">
+    <value>Số video render cùng lúc</value>
+  </data>
+  <data name="BackgroundScale" xml:space="preserve">
+    <value>Phóng nền (Background scale)</value>
+  </data>
+  <data name="BackgroundScaleHint" xml:space="preserve">
+    <value>100% = phủ vừa khung (cover). 150% = phóng 1.5x rồi crop giữa (mặc định). Đổi scale sẽ tạo cache nền mới.</value>
+  </data>
+  <data name="ParallelJobsHint" xml:space="preserve">
+    <value>1 = lần lượt. 2 = hai video song song (khuyến nghị khi có NVENC). 3 chỉ khi GPU còn trống nhiều.</value>
+  </data>
 </root>

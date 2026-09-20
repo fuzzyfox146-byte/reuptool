@@ -33,6 +33,7 @@ public class RenderCommandBuilderTests
 
         Assert.Contains("h264_nvenc", args);
         Assert.Contains("cuda", args);
+        Assert.Contains("1280x720", args);
         Assert.DoesNotContain("libx264", args);
         var firstInput = args.IndexOf("-i");
         Assert.True(firstInput > 0);

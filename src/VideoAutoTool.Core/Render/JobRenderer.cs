@@ -15,6 +15,7 @@ public sealed class JobRenderer
     private readonly EncoderSelector _encoderSelector;
     private readonly IFontCatalog _fontCatalog;
     private readonly PreparedAssetService? _assetService;
+    private static readonly SemaphoreSlim CachePrepareLock = new(1, 1);
 
     public JobRenderer(
         FfmpegRunner runner,
@@ -78,13 +79,22 @@ public sealed class JobRenderer
             List<string> args;
             if (useCache && _assetService is not null)
             {
-                var cachedBackgrounds = await _assetService.PrepareBackgroundsAsync(
-                    template,
-                    job,
-                    encode.Encoder,
-                    encode.HwAccel,
-                    progress: null,
-                    cancellationToken: cancellationToken).ConfigureAwait(false);
+                await CachePrepareLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+                List<string> cachedBackgrounds;
+                try
+                {
+                    cachedBackgrounds = await _assetService.PrepareBackgroundsAsync(
+                        template,
+                        job,
+                        encode.Encoder,
+                        encode.HwAccel,
+                        progress: null,
+                        cancellationToken: cancellationToken).ConfigureAwait(false);
+                }
+                finally
+                {
+                    CachePrepareLock.Release();
+                }
 
                 concatListPath = ConcatListBuilder.Create(cachedBackgrounds, tempDir);
 

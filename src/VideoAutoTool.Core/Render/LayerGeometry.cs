@@ -43,6 +43,80 @@ public static class LayerGeometry
         return (width, height);
     }
 
+    public static (int Width, int Height) ScaleToFitBox(int boxWidth, int boxHeight, int sourceWidth, int sourceHeight)
+    {
+        var bw = Math.Max(2, boxWidth);
+        var bh = Math.Max(2, boxHeight);
+        if (sourceWidth <= 0 || sourceHeight <= 0)
+        {
+            return (MakeEven(bw), MakeEven(bh));
+        }
+
+        var scale = Math.Min(bw / (double)sourceWidth, bh / (double)sourceHeight);
+        return (MakeEven((int)Math.Round(sourceWidth * scale)), MakeEven((int)Math.Round(sourceHeight * scale)));
+    }
+
+    public static bool TryGetCanvasBox(
+        TransformSettings? transform,
+        int canvasWidth,
+        int canvasHeight,
+        string side,
+        bool mirrorWithSide,
+        out LayerRect box)
+    {
+        if (transform?.Width is not > 0 || transform.Height is not > 0)
+        {
+            box = new LayerRect(0, 0, 0, 0);
+            return false;
+        }
+
+        var width = MakeEven(transform.Width.Value);
+        var height = MakeEven(transform.Height.Value);
+        var left = (int)Math.Round(transform.X);
+        var top = (int)Math.Round(transform.Y);
+        if (mirrorWithSide && side.Equals("left", StringComparison.OrdinalIgnoreCase))
+        {
+            left = canvasWidth - left - width;
+        }
+
+        box = new LayerRect(left, top, Math.Max(2, width), Math.Max(2, height));
+        return true;
+    }
+
+    public static LayerRect ResolveFittedOverlay(
+        TransformSettings? transform,
+        int sourceWidth,
+        int sourceHeight,
+        int canvasWidth,
+        int canvasHeight,
+        string side,
+        bool mirrorWithSide,
+        Anchor fallbackAnchor,
+        double fallbackX,
+        double fallbackY,
+        int fallbackWidth,
+        int fallbackHeight)
+    {
+        if (TryGetCanvasBox(transform, canvasWidth, canvasHeight, side, mirrorWithSide, out var box))
+        {
+            var (fw, fh) = ScaleToFitBox(box.Width, box.Height, sourceWidth, sourceHeight);
+            var left = box.Left + (box.Width - fw) / 2;
+            var top = box.Top + (box.Height - fh) / 2;
+            return new LayerRect(left, top, fw, fh);
+        }
+
+        return ComputeOverlayRect(
+            fallbackAnchor,
+            fallbackX,
+            fallbackY,
+            fallbackWidth,
+            fallbackHeight,
+            canvasWidth,
+            canvasHeight,
+            side,
+            mirrorWithSide);
+    }
+
     public static int MakeEven(int value) => value % 2 == 0 ? value : value + 1;
 
     private static Anchor MirrorAnchorHorizontal(Anchor anchor) => anchor switch
@@ -74,14 +148,23 @@ public static class LayerGeometry
     {
         var x = box.X;
         var y = box.Y;
-        var anchor = box.Anchor;
         if (mirrorWithSide && side.Equals("left", StringComparison.OrdinalIgnoreCase))
         {
-            x = canvasWidth - x;
-            anchor = MirrorAnchorHorizontal(anchor);
+            x = canvasWidth - x - box.Width;
         }
 
-        var (ax, ay) = AnchorFactors(anchor);
+        var ax = textAlign switch
+        {
+            TextAlign.Left => 0.0,
+            TextAlign.Right => 1.0,
+            _ => 0.5
+        };
+        var ay = verticalAlign switch
+        {
+            VerticalAlign.Top => 0.0,
+            VerticalAlign.Bottom => 1.0,
+            _ => 0.5
+        };
         var px = (int)Math.Round(x + box.Width * ax);
         var py = (int)Math.Round(y + box.Height * ay);
         var an = AssAlignment(textAlign, verticalAlign);

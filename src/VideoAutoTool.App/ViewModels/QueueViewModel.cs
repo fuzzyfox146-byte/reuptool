@@ -131,7 +131,7 @@ public sealed partial class QueueViewModel : ObservableObject
         _elapsed.Restart();
         _elapsedTimer.Start();
         RefreshElapsed();
-        AppendLog("Bắt đầu hàng đợi.");
+        AppendLog($"Bắt đầu hàng đợi — {Math.Clamp(maxParallel, 1, 3)} video cùng lúc.");
 
         try
         {

@@ -298,6 +298,8 @@ public sealed partial class SourceViewModel : ObservableObject
             ApplyFolderOverride(template, row);
         }
 
+        TemplateRenderOptions.ApplyBackgroundScalePercent(template, _settings.BackgroundScalePercent);
+
         _workingTemplate = template;
         return template;
     }

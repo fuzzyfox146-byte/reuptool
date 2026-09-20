@@ -50,6 +50,7 @@ public static class RenderCommandBuilder
         args.Add(duration.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
 
         AppendVideoEncoder(args, encode.Encoder, template.Output.Quality);
+        AppendOutputSize(args, template.Canvas);
         args.Add("-c:a");
         args.Add("aac");
         args.Add("-b:a");
@@ -132,6 +133,14 @@ public static class RenderCommandBuilder
             args.AddRange(["-c:v", "libx264", "-preset", "medium", "-crf", quality.ToString(), "-profile:v", "high"]);
         }
     }
+
+    public static void AppendOutputSize(List<string> args, CanvasSettings canvas)
+    {
+        args.Add("-s");
+        args.Add($"{canvas.Width}x{canvas.Height}");
+        args.Add("-r");
+        args.Add(canvas.Fps.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
     public static List<string> BuildCachedArguments(
         Template template,
         RenderJobPlan job,
@@ -188,6 +197,7 @@ public static class RenderCommandBuilder
         args.Add("0:a:0");
 
         AppendVideoEncoder(args, encode.Encoder, template.Output.Quality);
+        AppendOutputSize(args, template.Canvas);
 
         args.Add("-shortest");
         args.Add("-movflags");

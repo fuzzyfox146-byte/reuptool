@@ -359,14 +359,26 @@
                         <TextBlock Text="{Binding SettingsViewModel.FfmpegVersion, StringFormat='Phiên bản: {0}'}"
                                    Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,8"/>
                         <TextBlock TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,16"
-                                   Text="FFmpeg đi kèm app. Render ưu tiên NVENC (GPU) + decode CUDA/D3D11; chỉ dùng CPU khi máy không có NVIDIA."/>
+                                   Text="FFmpeg đi kèm app. Encode dùng NVENC (GPU); overlay/phụ đề vẫn chạy CPU nên CPU khoảng 50% là bình thường. RTX 5060 chạy 2 job cùng lúc được."/>
 
-                        <Label Content="Số job song song:"/>
-                        <ComboBox SelectedValue="{Binding SettingsViewModel.ParallelCount}" Width="200" HorizontalAlignment="Left">
-                            <ComboBoxItem Content="1"/>
-                            <ComboBoxItem Content="2" IsSelected="True"/>
-                            <ComboBoxItem Content="3"/>
-                        </ComboBox>
+                        <Label Content="Số video render cùng lúc:"/>
+                        <ComboBox ItemsSource="{Binding SettingsViewModel.ParallelOptions}"
+                                  SelectedItem="{Binding SettingsViewModel.ParallelCount}"
+                                  Width="200" HorizontalAlignment="Left"/>
+                        <TextBlock TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,4,0,16"
+                                   Text="1 = lần lượt. 2 = hai video song song (khuyến nghị khi có NVENC). 3 chỉ khi GPU còn trống nhiều."/>
+
+                        <Label Content="Phóng nền (Background scale):"/>
+                        <DockPanel Margin="0,0,0,4" LastChildFill="False">
+                            <TextBlock DockPanel.Dock="Right" VerticalAlignment="Center" Width="48"
+                                       Text="{Binding SettingsViewModel.BackgroundScalePercent, StringFormat={}{0}%}"/>
+                            <Slider Minimum="100" Maximum="250" TickFrequency="10" IsSnapToTickEnabled="True"
+                                    SmallChange="10" LargeChange="10"
+                                    Value="{Binding SettingsViewModel.BackgroundScalePercent, UpdateSourceTrigger=PropertyChanged}"
+                                    Width="280" HorizontalAlignment="Left" VerticalAlignment="Center"/>
+                        </DockPanel>
+                        <TextBlock TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}"
+                                   Text="100% = phủ vừa khung (cover). 150% = phóng 1.5x rồi crop giữa (mặc định). Đổi scale sẽ tạo cache nền mới."/>
                     </StackPanel>
                 </Grid>
             </TabItem>

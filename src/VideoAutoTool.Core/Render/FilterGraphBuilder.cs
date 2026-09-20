@@ -20,7 +20,7 @@ public static class FilterGraphBuilder
     {
         var canvas = template.Canvas;
         var bgLayer = template.Layers.First(l => l.Type == LayerType.BackgroundChain);
-        var avatarLayer = template.Layers.FirstOrDefault(l => l.Type == LayerType.Image);
+        var avatarLayer = FindAvatarLayer(template);
         var waveLayer = template.Layers.FirstOrDefault(l => l.Type == LayerType.LoopVideo);
 
         var filters = new List<string>();
@@ -37,7 +37,7 @@ public static class FilterGraphBuilder
                 ? Math.Max(0.01, job.DurationSeconds - job.Backgrounds.Take(job.Backgrounds.Count - 1).Sum(s => s.DurationFull))
                 : segment.DurationFull;
             var scaleExpr = bgLayer.ScaleMode == ScaleMode.Cover
-                ? $"w='trunc(max({canvas.Width}/iw,{canvas.Height}/ih)*iw*{bgLayer.Scale:0.###}/2)*2':h='trunc(max({canvas.Width}/iw,{canvas.Height}/ih)*ih*{bgLayer.Scale:0.###}/2)*2'"
+                ? CoverScaleExpr(canvas, bgLayer.Scale)
                 : $"w={canvas.Width}:h={canvas.Height}";
             filters.Add(
                 $"[{inputIndex}:v]trim=duration={segDuration:0.###},setpts=PTS-STARTPTS,fps={canvas.Fps},scale={scaleExpr}:flags=bicubic,crop=w='min(iw,{canvas.Width})':h='min(ih,{canvas.Height})',pad={canvas.Width}:{canvas.Height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1[{label}]");
@@ -63,66 +63,18 @@ public static class FilterGraphBuilder
 
         filters.Add("[base][bga]overlay=eof_action=repeat:format=gbrp[L1]");
         var current = "[L1]";
-
-        if (job.AvatarPath is not null && avatarLayer is not null && avatarInfo is not null)
-        {
-            var (aw, ah) = LayerGeometry.ScaleToFitHeight(
-                avatarLayer.Transform?.Scale ?? 1.0,
-                canvas.Height,
-                avatarInfo.Width ?? canvas.Width,
-                avatarInfo.Height ?? canvas.Height);
-            var rect = LayerGeometry.ComputeOverlayRect(
-                avatarLayer.Transform?.Anchor ?? Anchor.BottomRight,
-                avatarLayer.Transform?.X ?? 0,
-                avatarLayer.Transform?.Y ?? 0,
-                aw,
-                ah,
-                canvas.Width,
-                canvas.Height,
-                job.Side,
-                avatarLayer.MirrorWithSide);
-            filters.Add($"[{inputIndex}:v]fps={canvas.Fps},trim=duration={job.DurationSeconds:0.###},setpts=PTS-STARTPTS,format=rgba,scale=w={aw}:h={ah}:force_original_aspect_ratio=decrease[av]");
-            extraInputs.Add(job.AvatarPath);
-            inputIndex++;
-            filters.Add($"{current}[av]overlay=x={rect.Left}:y={rect.Top}:eof_action=repeat:format=gbrp[L2]");
-            current = "[L2]";
-        }
-
-        if (job.WavePath is not null && waveLayer is not null && waveLayer.Visible && waveInfo is not null)
-        {
-            var targetWidth = waveLayer.Transform?.Width ?? 500;
-            var (ww, wh) = LayerGeometry.ScaleToFitWidth(targetWidth, waveInfo.Width ?? targetWidth, waveInfo.Height ?? 100);
-            var rect = LayerGeometry.ComputeOverlayRect(
-                waveLayer.Transform?.Anchor ?? Anchor.Center,
-                waveLayer.Transform?.X ?? 0,
-                waveLayer.Transform?.Y ?? 0,
-                ww,
-                wh,
-                canvas.Width,
-                canvas.Height,
-                job.Side,
-                waveLayer.MirrorWithSide);
-            var waveChain = $"[{inputIndex}:v]fps={canvas.Fps},trim=duration={job.DurationSeconds:0.###},setpts=PTS-STARTPTS,format=rgba,scale=w={ww}:h={wh}:flags=bicubic";
-            if (!waveInfo.HasAlpha)
-            {
-                waveChain += $",lumakey=threshold=0:tolerance={waveLayer.BlackKeyTolerance:0.###}:softness={waveLayer.BlackKeyTolerance:0.###}";
-            }
-
-            waveChain += "[wv]";
-            filters.Add(waveChain);
-            extraInputs.Add(job.WavePath);
-            inputIndex++;
-            filters.Add($"{current}[wv]overlay=x={rect.Left}:y={rect.Top}:eof_action=repeat:format=gbrp[L3]");
-            current = "[L3]";
-        }
-
-        if (includeSubtitles)
-        {
-            filters.Add($"{current}ass=filename=sub.ass[L4]");
-            current = "[L4]";
-        }
-
-        filters.Add($"{current}scale=out_color_matrix=bt709:out_range=tv:flags=accurate_rnd+full_chroma_int,format=yuv420p[vout]");
+        AppendOverlays(
+            filters,
+            extraInputs,
+            ref inputIndex,
+            ref current,
+            template,
+            job,
+            avatarLayer,
+            waveLayer,
+            avatarInfo,
+            waveInfo,
+            includeSubtitles);
         return new FilterGraphPlan(extraInputs, string.Join(';', filters), "[vout]");
     }
 
@@ -135,8 +87,7 @@ public static class FilterGraphBuilder
         bool includeSubtitles = true)
     {
         var canvas = template.Canvas;
-        var bgLayer = template.Layers.First(l => l.Type == LayerType.BackgroundChain);
-        var avatarLayer = template.Layers.FirstOrDefault(l => l.Type == LayerType.Image);
+        var avatarLayer = FindAvatarLayer(template);
         var waveLayer = template.Layers.FirstOrDefault(l => l.Type == LayerType.LoopVideo);
 
         var filters = new List<string>();
@@ -144,52 +95,94 @@ public static class FilterGraphBuilder
         var inputIndex = 2;
 
         // Input 0: driver audio
-        // Input 1: concat demuxer (all backgrounds)
+        // Input 1: concat demuxer (already canvas-sized when cache is current; still cover-fit 1.0).
         filters.Add($"color=c=black:s={canvas.Width}x{canvas.Height}:r={canvas.Fps}:d={job.DurationSeconds:0.###},format=gbrp[base]");
-        filters.Add($"[1:v]trim=duration={job.DurationSeconds:0.###},setpts=PTS-STARTPTS[bgcat]");
-        filters.Add($"[bgcat]format=rgba[bga]");
+        var cover = CoverScaleExpr(canvas, scale: 1.0);
+        filters.Add($"[1:v]fps={canvas.Fps},trim=duration={job.DurationSeconds:0.###},setpts=PTS-STARTPTS,scale={cover}:flags=bicubic,crop=w='min(iw,{canvas.Width})':h='min(ih,{canvas.Height})',pad={canvas.Width}:{canvas.Height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,format=rgba[bga]");
         filters.Add("[base][bga]overlay=eof_action=repeat:format=gbrp[L1]");
         var current = "[L1]";
+        AppendOverlays(
+            filters,
+            extraInputs,
+            ref inputIndex,
+            ref current,
+            template,
+            job,
+            avatarLayer,
+            waveLayer,
+            avatarInfo,
+            waveInfo,
+            includeSubtitles);
+        return new FilterGraphPlan(extraInputs, string.Join(';', filters), "[vout]");
+    }
 
-        if (job.AvatarPath is not null && avatarLayer is not null && avatarInfo is not null)
+    private static LayerDefinition? FindAvatarLayer(Template template) =>
+        template.Layers.FirstOrDefault(l => l.Id == "avatar")
+        ?? template.Layers.FirstOrDefault(l => l.Type == LayerType.Image);
+
+    private static void AppendOverlays(
+        List<string> filters,
+        List<string> extraInputs,
+        ref int inputIndex,
+        ref string current,
+        Template template,
+        RenderJobPlan job,
+        LayerDefinition? avatarLayer,
+        LayerDefinition? waveLayer,
+        MediaInfo? avatarInfo,
+        MediaInfo? waveInfo,
+        bool includeSubtitles)
+    {
+        var canvas = template.Canvas;
+        if (job.AvatarPath is not null && avatarLayer is { Visible: true } && avatarInfo is not null)
         {
+            var srcW = avatarInfo.Width ?? canvas.Width;
+            var srcH = avatarInfo.Height ?? canvas.Height;
             var (aw, ah) = LayerGeometry.ScaleToFitHeight(
                 avatarLayer.Transform?.Scale ?? 1.0,
                 canvas.Height,
-                avatarInfo.Width ?? canvas.Width,
-                avatarInfo.Height ?? canvas.Height);
-            var rect = LayerGeometry.ComputeOverlayRect(
+                srcW,
+                srcH);
+            var rect = LayerGeometry.ResolveFittedOverlay(
+                avatarLayer.Transform,
+                srcW,
+                srcH,
+                canvas.Width,
+                canvas.Height,
+                job.Side,
+                avatarLayer.MirrorWithSide,
                 avatarLayer.Transform?.Anchor ?? Anchor.BottomRight,
                 avatarLayer.Transform?.X ?? 0,
                 avatarLayer.Transform?.Y ?? 0,
                 aw,
-                ah,
-                canvas.Width,
-                canvas.Height,
-                job.Side,
-                avatarLayer.MirrorWithSide);
-            filters.Add($"[{inputIndex}:v]fps={canvas.Fps},trim=duration={job.DurationSeconds:0.###},setpts=PTS-STARTPTS,format=rgba,scale=w={aw}:h={ah}:force_original_aspect_ratio=decrease[av]");
+                ah);
+            filters.Add($"[{inputIndex}:v]fps={canvas.Fps},trim=duration={job.DurationSeconds:0.###},setpts=PTS-STARTPTS,format=rgba,scale=w={rect.Width}:h={rect.Height}:force_original_aspect_ratio=decrease[av]");
             extraInputs.Add(job.AvatarPath);
             inputIndex++;
             filters.Add($"{current}[av]overlay=x={rect.Left}:y={rect.Top}:eof_action=repeat:format=gbrp[L2]");
             current = "[L2]";
         }
 
-        if (job.WavePath is not null && waveLayer is not null && waveLayer.Visible && waveInfo is not null)
+        if (job.WavePath is not null && waveLayer is { Visible: true } && waveInfo is not null)
         {
+            var srcW = waveInfo.Width ?? waveLayer.Transform?.Width ?? 500;
+            var srcH = waveInfo.Height ?? 100;
             var targetWidth = waveLayer.Transform?.Width ?? 500;
-            var (ww, wh) = LayerGeometry.ScaleToFitWidth(targetWidth, waveInfo.Width ?? targetWidth, waveInfo.Height ?? 100);
-            var rect = LayerGeometry.ComputeOverlayRect(
+            var (ww, wh) = LayerGeometry.ScaleToFitWidth(targetWidth, srcW, srcH);
+            var rect = LayerGeometry.ResolveFittedOverlay(
+                waveLayer.Transform,
+                srcW,
+                srcH,
+                canvas.Width,
+                canvas.Height,
+                job.Side,
+                waveLayer.MirrorWithSide,
                 waveLayer.Transform?.Anchor ?? Anchor.Center,
                 waveLayer.Transform?.X ?? 0,
                 waveLayer.Transform?.Y ?? 0,
                 ww,
-                wh,
-                canvas.Width,
-                canvas.Height,
-                job.Side,
-                waveLayer.MirrorWithSide);
-            var waveChain = $"[{inputIndex}:v]fps={canvas.Fps},trim=duration={job.DurationSeconds:0.###},setpts=PTS-STARTPTS,format=rgba,scale=w={ww}:h={wh}:flags=bicubic";
+                wh);
+            var waveChain = $"[{inputIndex}:v]fps={canvas.Fps},trim=duration={job.DurationSeconds:0.###},setpts=PTS-STARTPTS,format=rgba,scale=w={rect.Width}:h={rect.Height}:flags=bicubic";
             if (!waveInfo.HasAlpha)
             {
                 waveChain += $",lumakey=threshold=0:tolerance={waveLayer.BlackKeyTolerance:0.###}:softness={waveLayer.BlackKeyTolerance:0.###}";
@@ -205,11 +198,13 @@ public static class FilterGraphBuilder
 
         if (includeSubtitles)
         {
-            filters.Add($"{current}ass=filename=sub.ass[L4]");
+            filters.Add($"{current}ass=filename=sub.ass:fontsdir=fonts[L4]");
             current = "[L4]";
         }
 
         filters.Add($"{current}scale=out_color_matrix=bt709:out_range=tv:flags=accurate_rnd+full_chroma_int,format=yuv420p[vout]");
-        return new FilterGraphPlan(extraInputs, string.Join(';', filters), "[vout]");
     }
+
+    private static string CoverScaleExpr(CanvasSettings canvas, double scale) =>
+        $"w='trunc(max({canvas.Width}/iw,{canvas.Height}/ih)*iw*{scale:0.###}/2)*2':h='trunc(max({canvas.Width}/iw,{canvas.Height}/ih)*ih*{scale:0.###}/2)*2'";
 }

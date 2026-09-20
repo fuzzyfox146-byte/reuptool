@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using VideoAutoTool.App.Services;
+using VideoAutoTool.Core.Render;
 using VideoAutoTool.Core.Templates;
 
 namespace VideoAutoTool.App.ViewModels;
@@ -130,7 +131,13 @@ public partial class MainViewModel : ObservableObject
             SourceViewModel.RestoreWorkspace(session.RootFolder, session.SelectedDesignPath, session.FolderOverrides);
             if (session.ParallelCount >= 1)
             {
-                SettingsViewModel.ParallelCount = session.ParallelCount;
+                SettingsViewModel.ParallelCount = Math.Clamp(session.ParallelCount, 1, 3);
+            }
+
+            if (session.BackgroundScalePercent > 0)
+            {
+                SettingsViewModel.BackgroundScalePercent =
+                    TemplateRenderOptions.ClampScalePercent(session.BackgroundScalePercent);
             }
         }
         finally
@@ -168,6 +175,7 @@ public partial class MainViewModel : ObservableObject
         RootFolder = SourceViewModel.RootFolder,
         FolderOverrides = SourceViewModel.CaptureFolderOverrides(),
         FfmpegPath = SettingsViewModel.FfmpegPath,
-        ParallelCount = SettingsViewModel.ParallelCount
+        ParallelCount = SettingsViewModel.ParallelCount,
+        BackgroundScalePercent = SettingsViewModel.BackgroundScalePercent
     };
 }

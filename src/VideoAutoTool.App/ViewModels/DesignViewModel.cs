@@ -221,7 +221,7 @@ public sealed partial class DesignViewModel : ObservableObject
                     if (resetBoxes) SetBox(item, 0, 0, 1280, 720);
                     break;
                 case LayerType.Image:
-                    if (resetBoxes) SetBox(item, 0, 0, 1280, 720);
+                    if (resetBoxes) SetBox(item, 720, 0, 560, 720);
                     item.PreviewImagePath = avatar;
                     break;
                 case LayerType.LoopVideo:
@@ -254,7 +254,7 @@ public sealed partial class DesignViewModel : ObservableObject
         foreach (var item in Layers.Where(l => l.IsTextLayer))
         {
             item.PreviewColor = preset.Color;
-            item.PreviewFontSize = Math.Clamp(preset.Size, 8, 200);
+            item.PreviewFontSize = AssBuilder.ResolveFontSize(preset);
             item.Layer.StyleAssignment ??= new StyleAssignment
             {
                 Mode = StyleAssignmentMode.Fixed,
@@ -412,8 +412,25 @@ public sealed partial class DesignViewModel : ObservableObject
     public Template BuildTemplate()
     {
         var template = TemplateDefaults.CreateCo139();
+        template.Canvas = new CanvasSettings { Width = 1280, Height = 720, Fps = 25 };
         template.Layers = Layers.Select(l => l.Layer).ToList();
         template.StylePresets = StylePresets.Select(p => p.Preset).ToList();
+        var sub = template.Layers.FirstOrDefault(l => l.Type == LayerType.Subtitle);
+        if (sub?.Transform is { Width: > 0, Height: > 0 } box)
+        {
+            foreach (var preset in template.StylePresets)
+            {
+                preset.Box = new SubtitleBox
+                {
+                    X = box.X,
+                    Y = box.Y,
+                    Width = box.Width.Value,
+                    Height = box.Height.Value,
+                    Anchor = Anchor.TopLeft
+                };
+            }
+        }
+
         return template;
     }
 }

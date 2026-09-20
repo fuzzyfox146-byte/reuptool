@@ -24,6 +24,7 @@ public sealed class AssBuilder
     public string Build(RenderJobPlan job, Template template, IReadOnlyList<Cue> cues)
     {
         var preset = job.StylePreset;
+        var fontSize = ResolveFontSize(preset);
         var canvas = template.Canvas;
         var (px, py, an) = LayerGeometry.SubtitleAnchorPoint(
             preset.Box, preset.TextAlign, preset.VerticalAlign, job.Side, true, canvas.Width);
@@ -41,7 +42,7 @@ public sealed class AssBuilder
         sb.AppendLine(string.Join(',',
             "Default",
             Escape(preset.Font),
-            preset.Size.ToString(CultureInfo.InvariantCulture),
+            fontSize.ToString(CultureInfo.InvariantCulture),
             ToAssColor(preset.Color),
             ToAssColor(preset.Color),
             ToAssColor(preset.OutlineColor),
@@ -71,9 +72,10 @@ public sealed class AssBuilder
                 text = EmojiRegex.Replace(text, string.Empty).Trim();
             }
 
-            var wrapped = _measurer.WrapText(text, preset, preset.Box.Width);
+            var wrapped = _measurer.WrapText(text, WithFontSize(preset, fontSize), preset.Box.Width);
             var lineText = string.Join("\\N", wrapped);
-            sb.AppendLine($"Dialogue: 0,{FormatAssTime(cue.Start)},{FormatAssTime(end)},Default,,0,0,0,,{{\\an{an}\\pos({px},{py})}}{lineText}");
+            sb.AppendLine(
+                $"Dialogue: 0,{FormatAssTime(cue.Start)},{FormatAssTime(end)},Default,,0,0,0,,{{\\an{an}\\pos({px},{py})\\fs{fontSize}\\c{ToAssColor(preset.Color)}\\3c{ToAssColor(preset.OutlineColor)}}}{lineText}");
         }
 
         _ = _fontCatalog.Exists(preset);
@@ -104,4 +106,30 @@ public sealed class AssBuilder
     }
 
     private static string Escape(string value) => value.Replace(',', ' ');
+
+    public static int ResolveFontSize(StylePreset preset)
+    {
+        var requested = preset.Size > 0 ? preset.Size : 72;
+        var fromBox = preset.Box.Height > 0
+            ? (int)Math.Round(preset.Box.Height * 0.36)
+            : requested;
+        return Math.Clamp(Math.Max(requested, fromBox), 8, 200);
+    }
+
+    private static StylePreset WithFontSize(StylePreset preset, int size) => new()
+    {
+        Id = preset.Id,
+        Font = preset.Font,
+        FontSource = preset.FontSource,
+        Size = size,
+        Bold = preset.Bold,
+        Color = preset.Color,
+        OutlineColor = preset.OutlineColor,
+        Outline = preset.Outline,
+        Shadow = preset.Shadow,
+        LineSpacing = preset.LineSpacing,
+        Box = preset.Box,
+        TextAlign = preset.TextAlign,
+        VerticalAlign = preset.VerticalAlign
+    };
 }

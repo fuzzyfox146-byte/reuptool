@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using VideoAutoTool.Core.Ffmpeg;
+using VideoAutoTool.Core.Render;
 
 namespace VideoAutoTool.App.ViewModels;
 
@@ -19,4 +20,27 @@ public partial class SettingsViewModel : ObservableObject
 
     [ObservableProperty]
     private int _parallelCount = 2;
+
+    [ObservableProperty]
+    private int _backgroundScalePercent = TemplateRenderOptions.DefaultBackgroundScalePercent;
+
+    public IReadOnlyList<int> ParallelOptions { get; } = [1, 2, 3];
+
+    partial void OnParallelCountChanged(int value)
+    {
+        var clamped = Math.Clamp(value, 1, 3);
+        if (clamped != value)
+        {
+            ParallelCount = clamped;
+        }
+    }
+
+    partial void OnBackgroundScalePercentChanged(int value)
+    {
+        var clamped = TemplateRenderOptions.ClampScalePercent(value);
+        if (clamped != value)
+        {
+            BackgroundScalePercent = clamped;
+        }
+    }
 }

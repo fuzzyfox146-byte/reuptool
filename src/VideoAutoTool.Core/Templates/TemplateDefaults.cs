@@ -57,9 +57,11 @@ public static class TemplateDefaults
                 },
                 Transform = new TransformSettings
                 {
-                    Anchor = Anchor.BottomRight,
-                    X = 1280,
-                    Y = 720,
+                    Anchor = Anchor.TopLeft,
+                    X = 720,
+                    Y = 0,
+                    Width = 560,
+                    Height = 720,
                     ScaleMode = ScaleMode.FitHeight,
                     Scale = 1.0
                 },
@@ -117,7 +119,7 @@ public static class TemplateDefaults
                 Id = "gold-serif",
                 Font = "Georgia",
                 FontSource = FontSource.Bundled,
-                Size = 55,
+                Size = 72,
                 Bold = true,
                 Color = "#F5A623",
                 OutlineColor = "#000000",
@@ -132,7 +134,7 @@ public static class TemplateDefaults
                 Id = "white-slab",
                 Font = "Rockwell Condensed",
                 FontSource = FontSource.Bundled,
-                Size = 55,
+                Size = 72,
                 Bold = true,
                 Color = "#FFFFFF",
                 OutlineColor = "#000000",

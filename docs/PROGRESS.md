@@ -1,19 +1,22 @@
 # PROGRESS - handoff log (agent: read first, update at the end of every task)
 
 ## Current state
-- Milestone: **concat list UTF-8 no BOM** (Version **1.0.15**).
-- Git: `621fc11` on `main` (queue/session/ffmpeg/NVENC/cache) **before** this concat fix.
-- Latest: ffmpeg concat failed with `unknown keyword '﻿file'` because `Encoding.UTF8` writes a BOM. Concat list is now UTF-8 **without** BOM.
+- Milestone: **settings scale + parallel 2 + larger ASS** (Version **1.0.17**).
+- Git: visual-fix 1.0.16 still **uncommitted**, this continues on that tree.
 
 ## Done
-- Commit `621fc11` Ship queue, session save, bundled FFmpeg, NVENC, and cache pipeline.
-- Stopped ignoring `src/.../Cache` (gitignore was `cache/` matching any folder named cache).
+- Settings: background scale 100–250% (default 150), applied at render (cache key includes scale).
+- Settings: parallel combo actually binds (was ComboBoxItem vs int). Default **2**. Cache prep serialized so 2 jobs don't race.
+- Subtitles: ASS `\fs` + color override; font size = max(Cỡ, 36% chiều cao hộp Sub). Default Cỡ 72. Preview canvas follows that size.
+- CPU: dropped extra `scale=W:H` after overlays (encode still NVENC). Overlay/ASS remain CPU by design.
 
 ## Decisions
-- Concat demuxer list: `UTF8Encoding(encoderShouldEmitUTF8Identifier: false)`.
+- Do not change avatar/soundwave layout.
+- Two concurrent NVENC encodes on RTX 5060; cache prepare is one-at-a-time then both encode.
 
 ## Open issues / risks
-- NVENC/hwaccel still not integration-tested beyond encode probe.
+- Saved session ParallelCount=1 still restores to 1 until user picks 2 in Cài đặt.
+- NVENC dual-session not integration-tested here.
 
 ## Next step
-- User: publish 1.0.15, Render thử lại.
+- Đã publish lại 1.0.17: `publish\VideoAutoTool.App.exe`. Chạy file này (đóng bản cũ nếu còn mở).

@@ -26,7 +26,9 @@ public sealed class AppSession
 
     public string FfmpegPath { get; set; } = "";
 
-    public int ParallelCount { get; set; } = 1;
+    public int ParallelCount { get; set; } = 2;
+
+    public int BackgroundScalePercent { get; set; } = 150;
 }
 
 public enum UnsavedCloseChoice

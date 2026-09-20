@@ -35,9 +35,9 @@ public sealed class FontCatalog : IFontCatalog
     {
         return preset.FontSource switch
         {
-            FontSource.Bundled => FindInDirectory(_bundledDirectory, preset.Font),
-            FontSource.Imported => FindInDirectory(_importedDirectory, preset.Font),
-            FontSource.System => null,
+            FontSource.Bundled => FindInDirectory(_bundledDirectory, preset.Font) ?? FindSystemFontFile(preset.Font),
+            FontSource.Imported => FindInDirectory(_importedDirectory, preset.Font) ?? FindSystemFontFile(preset.Font),
+            FontSource.System => FindSystemFontFile(preset.Font),
             _ => null
         };
     }
@@ -110,15 +110,28 @@ public sealed class FontCatalog : IFontCatalog
         return exact;
     }
 
-    private static bool HasSystemFont(string familyName)
+    private static bool HasSystemFont(string familyName) => FindSystemFontFile(familyName) is not null;
+
+    private static string? FindSystemFontFile(string familyName)
     {
         if (!OperatingSystem.IsWindows())
         {
-            return false;
+            return null;
         }
 
         var fontsFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Fonts));
-        return Directory.Exists(fontsFolder) && Directory.EnumerateFiles(fontsFolder)
-            .Any(f => Path.GetFileNameWithoutExtension(f).Contains(familyName, StringComparison.OrdinalIgnoreCase));
+        if (!Directory.Exists(fontsFolder))
+        {
+            return null;
+        }
+
+        var files = Directory.EnumerateFiles(fontsFolder)
+            .Where(f => f.EndsWith(".ttf", StringComparison.OrdinalIgnoreCase) ||
+                        f.EndsWith(".otf", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        return files.FirstOrDefault(f => Path.GetFileNameWithoutExtension(f)
+                   .Equals(familyName, StringComparison.OrdinalIgnoreCase))
+               ?? files.FirstOrDefault(f => Path.GetFileNameWithoutExtension(f)
+                   .StartsWith(familyName, StringComparison.OrdinalIgnoreCase));
     }
 }
