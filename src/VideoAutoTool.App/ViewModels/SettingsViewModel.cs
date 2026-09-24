@@ -29,6 +29,15 @@ public partial class SettingsViewModel : ObservableObject
 
     public IReadOnlyList<int> ParallelOptions { get; } = [1, 2, 3];
 
+    public IReadOnlyList<RenderHeightOption> RenderHeightOptions { get; } =
+    [
+        new(TemplateRenderOptions.OutputHeight720, "720p (1280×720)"),
+        new(TemplateRenderOptions.OutputHeight480, "480p (854×480)")
+    ];
+
+    [ObservableProperty]
+    private int _renderHeight = TemplateRenderOptions.OutputHeight720;
+
     partial void OnQueueBatchSizeChanged(int value)
     {
         var clamped = Math.Clamp(value, 1, 99);
@@ -47,6 +56,15 @@ public partial class SettingsViewModel : ObservableObject
         }
     }
 
+    partial void OnRenderHeightChanged(int value)
+    {
+        var normalized = TemplateRenderOptions.NormalizeOutputHeight(value);
+        if (normalized != value)
+        {
+            RenderHeight = normalized;
+        }
+    }
+
     partial void OnBackgroundScalePercentChanged(int value)
     {
         var clamped = TemplateRenderOptions.ClampScalePercent(value);
@@ -56,3 +74,5 @@ public partial class SettingsViewModel : ObservableObject
         }
     }
 }
+
+public sealed record RenderHeightOption(int Height, string Label);

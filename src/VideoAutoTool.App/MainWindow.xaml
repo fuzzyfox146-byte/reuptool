@@ -385,6 +385,153 @@
                 </Grid>
             </TabItem>
 
+            <!-- Tab Tải nguồn -->
+            <TabItem Header="Tải nguồn">
+                <Grid Margin="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="170"/>
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Margin="0,0,0,8">
+                        <TextBlock Text="Tải nguồn" FontSize="20" FontWeight="Bold"/>
+                        <TextBlock TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,4,0,0"
+                                   Text="Mỗi dòng là một kênh, tải riêng. Dừng chỉ dừng kênh đó, bấm Tải tiếp để tải phần còn thiếu. Đang tải vẫn thêm kênh khác được. File đã có thì bỏ qua."/>
+                    </StackPanel>
+
+                    <Grid Grid.Row="1" Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="160"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,12,0">
+                            <Label Content="yt-dlp.exe"/>
+                            <DockPanel Margin="0,0,0,6">
+                                <Button DockPanel.Dock="Right" Content="Duyệt..." Margin="8,0,0,0"
+                                        Command="{Binding DownloadViewModel.BrowseYtDlpCommand}"/>
+                                <TextBox Text="{Binding DownloadViewModel.YtDlpPath, UpdateSourceTrigger=PropertyChanged}" IsReadOnly="True"/>
+                            </DockPanel>
+                            <Label Content="Cookie dùng chung (cookies.txt)"/>
+                            <DockPanel Margin="0,0,0,6">
+                                <Button DockPanel.Dock="Right" Content="Đổi cookie..." Margin="8,0,0,0"
+                                        Command="{Binding DownloadViewModel.BrowseCookiesCommand}"/>
+                                <TextBox Text="{Binding DownloadViewModel.CookiesPath, UpdateSourceTrigger=PropertyChanged}" IsReadOnly="True"/>
+                            </DockPanel>
+                            <DockPanel LastChildFill="False">
+                                <StackPanel>
+                                    <Label Content="Chất lượng video"/>
+                                    <ComboBox Width="100" HorizontalAlignment="Left"
+                                              ItemsSource="{Binding DownloadViewModel.QualityOptions}"
+                                              DisplayMemberPath="Label"
+                                              SelectedValuePath="Id"
+                                              SelectedValue="{Binding DownloadViewModel.VideoQuality}"/>
+                                </StackPanel>
+                                <StackPanel Margin="16,0,0,0">
+                                    <Label Content="Số kênh tải cùng lúc"/>
+                                    <ComboBox ItemsSource="{Binding DownloadViewModel.ParallelOptions}"
+                                              SelectedItem="{Binding DownloadViewModel.DownloadParallel}"
+                                              Width="80" HorizontalAlignment="Left"/>
+                                </StackPanel>
+                            </DockPanel>
+                        </StackPanel>
+                        <StackPanel Grid.Column="1">
+                            <Button Content="Thêm kênh" Margin="0,0,0,6" Padding="8,6"
+                                    Command="{Binding DownloadViewModel.AddChannelCommand}"/>
+                            <Button Content="Tải tất cả" Padding="8,6"
+                                    Command="{Binding DownloadViewModel.StartCommand}"
+                                    ToolTip="Chỉ bắt đầu các kênh đang không tải. Kênh đang chạy giữ nguyên."/>
+                        </StackPanel>
+                    </Grid>
+
+                    <DockPanel Grid.Row="2">
+                        <Grid DockPanel.Dock="Top" Margin="0,0,0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="2*"/>
+                                <ColumnDefinition Width="70"/>
+                                <ColumnDefinition Width="2*"/>
+                                <ColumnDefinition Width="52"/>
+                                <ColumnDefinition Width="52"/>
+                                <ColumnDefinition Width="52"/>
+                                <ColumnDefinition Width="64"/>
+                                <ColumnDefinition Width="180"/>
+                                <ColumnDefinition Width="76"/>
+                                <ColumnDefinition Width="64"/>
+                                <ColumnDefinition Width="88"/>
+                                <ColumnDefinition Width="48"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Folder cha"/>
+                            <TextBlock Grid.Column="2" Text="Link kênh"/>
+                            <TextBlock Grid.Column="3" Text="Từ"/>
+                            <TextBlock Grid.Column="4" Text="Đến"/>
+                            <TextBlock Grid.Column="5" Text="Số"/>
+                            <TextBlock Grid.Column="6" Text="Ngôn ngữ"/>
+                            <TextBlock Grid.Column="7" Text="Tiến độ"/>
+                        </Grid>
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <ItemsControl ItemsSource="{Binding DownloadViewModel.Channels}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="0,2">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="2*"/>
+                                                <ColumnDefinition Width="70"/>
+                                                <ColumnDefinition Width="2*"/>
+                                                <ColumnDefinition Width="52"/>
+                                                <ColumnDefinition Width="52"/>
+                                                <ColumnDefinition Width="52"/>
+                                                <ColumnDefinition Width="64"/>
+                                                <ColumnDefinition Width="180"/>
+                                                <ColumnDefinition Width="76"/>
+                                                <ColumnDefinition Width="64"/>
+                                                <ColumnDefinition Width="88"/>
+                                                <ColumnDefinition Width="48"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBox Grid.Column="0" Margin="0,0,4,0" IsEnabled="{Binding CanEdit}"
+                                                     Text="{Binding ParentFolder, UpdateSourceTrigger=PropertyChanged}"/>
+                                            <Button Grid.Column="1" Content="Duyệt" Margin="0,0,4,0"
+                                                    Command="{Binding BrowseCommand}"/>
+                                            <TextBox Grid.Column="2" Margin="0,0,4,0" IsEnabled="{Binding CanEdit}"
+                                                     Text="{Binding ChannelUrl, UpdateSourceTrigger=PropertyChanged}"/>
+                                            <TextBox Grid.Column="3" Margin="0,0,4,0" IsEnabled="{Binding CanEdit}"
+                                                     Text="{Binding PlaylistStart, UpdateSourceTrigger=PropertyChanged}"/>
+                                            <TextBox Grid.Column="4" Margin="0,0,4,0" IsEnabled="{Binding CanEdit}"
+                                                     Text="{Binding PlaylistEnd, UpdateSourceTrigger=PropertyChanged}"/>
+                                            <TextBox Grid.Column="5" Margin="0,0,4,0" IsEnabled="{Binding CanEdit}"
+                                                     Text="{Binding NameStart, UpdateSourceTrigger=PropertyChanged}"/>
+                                            <TextBox Grid.Column="6" Margin="0,0,4,0" IsEnabled="{Binding CanEdit}"
+                                                     Text="{Binding Language, UpdateSourceTrigger=PropertyChanged}"/>
+                                            <StackPanel Grid.Column="7" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Status}" FontWeight="Bold"/>
+                                                <TextBlock Text="{Binding VideoProgress}"/>
+                                                <TextBlock Text="{Binding TextProgress}"/>
+                                            </StackPanel>
+                                            <Button Grid.Column="8" Content="{Binding StartLabel}" Margin="0,0,4,0"
+                                                    Command="{Binding StartCommand}"/>
+                                            <Button Grid.Column="9" Content="Dừng" Margin="0,0,4,0"
+                                                    Command="{Binding StopCommand}"/>
+                                            <Button Grid.Column="10" Content="Xóa lịch sử" Margin="0,0,4,0"
+                                                    ToolTip="Xóa downloaded_videos.txt và downloaded_subs.txt trong folder này. Không xóa video đã tải."
+                                                    Command="{Binding ClearArchiveCommand}"/>
+                                            <Button Grid.Column="11" Content="Xóa"
+                                                    Command="{Binding RemoveCommand}"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </DockPanel>
+
+                    <DockPanel Grid.Row="3">
+                        <TextBlock DockPanel.Dock="Top" Text="{Binding DownloadViewModel.Status}" FontWeight="Bold" Margin="0,8,0,0"/>
+                        <TextBlock DockPanel.Dock="Top" Text="Nhật ký, 20 dòng cuối" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,4"/>
+                        <ListBox ItemsSource="{Binding DownloadViewModel.LogLines}"
+                                 Background="{StaticResource SurfaceBrush}"/>
+                    </DockPanel>
+                </Grid>
+            </TabItem>
+
             <!-- Tab Cài đặt -->
             <TabItem Header="Cài đặt">
                 <Grid Margin="16">
@@ -410,6 +557,15 @@
                                  Text="{Binding SettingsViewModel.QueueBatchSize, UpdateSourceTrigger=PropertyChanged}"/>
                         <TextBlock TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,16"
                                    Text="Ví dụ 9: mỗi lần thêm nguồn, hàng chính nhận 9 video nguồn đó. Phần còn lại nằm bên phải. Khi hàng chính hết video đang chờ, nạp tiếp 9 video mỗi nguồn. Chỉ sửa khi không có video đang render."/>
+
+                        <Label Content="Kích thước video xuất:"/>
+                        <ComboBox ItemsSource="{Binding SettingsViewModel.RenderHeightOptions}"
+                                  DisplayMemberPath="Label"
+                                  SelectedValuePath="Height"
+                                  SelectedValue="{Binding SettingsViewModel.RenderHeight}"
+                                  Width="200" HorizontalAlignment="Left"/>
+                        <TextBlock TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,4,0,16"
+                                   Text="Áp dụng cho mọi lần render. 720p ghép nền, avatar và sóng trên GPU. 480p giữ graph CPU vì nhanh hơn trên máy này."/>
 
                         <Label Content="Số video render cùng lúc:"/>
                         <ComboBox ItemsSource="{Binding SettingsViewModel.ParallelOptions}"

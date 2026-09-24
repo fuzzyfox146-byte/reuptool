@@ -113,6 +113,45 @@ public static class FilterGraphBuilder
         return new FilterGraphPlan(extraInputs, string.Join(';', filters), "[vout]");
     }
 
+    /// <summary>
+    /// 720p CUDA overlay was faster on this machine. 480p was slower, so it stays on the CPU graph.
+    /// </summary>
+    public static bool ShouldUseGpuOverlay(CanvasSettings canvas) =>
+        canvas.Width >= 1280 && canvas.Height >= 720;
+
+    public static FilterGraphPlan BuildCachedGpu(
+        Template template,
+        RenderJobPlan job,
+        string concatInputPath,
+        MediaInfo? avatarInfo,
+        MediaInfo? waveInfo,
+        bool includeSubtitles = true)
+    {
+        var canvas = template.Canvas;
+        var avatarLayer = FindAvatarLayer(template);
+        var waveLayer = template.Layers.FirstOrDefault(l => l.Type == LayerType.LoopVideo);
+
+        var filters = new List<string>();
+        var extraInputs = new List<string> { concatInputPath };
+        var inputIndex = 2;
+
+        filters.Add($"[1:v]scale_cuda={canvas.Width}:{canvas.Height}:format=yuv420p[bg]");
+        var current = "[bg]";
+        AppendGpuOverlays(
+            filters,
+            extraInputs,
+            ref inputIndex,
+            ref current,
+            template,
+            job,
+            avatarLayer,
+            waveLayer,
+            avatarInfo,
+            waveInfo,
+            includeSubtitles);
+        return new FilterGraphPlan(extraInputs, string.Join(';', filters), "[vout]");
+    }
+
     private static LayerDefinition? FindAvatarLayer(Template template) =>
         template.Layers.FirstOrDefault(l => l.Id == "avatar")
         ?? template.Layers.FirstOrDefault(l => l.Type == LayerType.Image);
@@ -200,6 +239,96 @@ public static class FilterGraphBuilder
         }
 
         filters.Add($"{current}scale=out_color_matrix=bt709:out_range=tv:flags=accurate_rnd+full_chroma_int,format=yuv420p[vout]");
+    }
+
+    private static void AppendGpuOverlays(
+        List<string> filters,
+        List<string> extraInputs,
+        ref int inputIndex,
+        ref string current,
+        Template template,
+        RenderJobPlan job,
+        LayerDefinition? avatarLayer,
+        LayerDefinition? waveLayer,
+        MediaInfo? avatarInfo,
+        MediaInfo? waveInfo,
+        bool includeSubtitles)
+    {
+        var canvas = template.Canvas;
+        if (job.AvatarPath is not null && avatarLayer is { Visible: true } && avatarInfo is not null)
+        {
+            var srcW = avatarInfo.Width ?? canvas.Width;
+            var srcH = avatarInfo.Height ?? canvas.Height;
+            var (aw, ah) = LayerGeometry.ScaleToFitHeight(
+                avatarLayer.Transform?.Scale ?? 1.0,
+                canvas.Height,
+                srcW,
+                srcH);
+            var rect = LayerGeometry.ResolveFittedOverlay(
+                avatarLayer.Transform,
+                srcW,
+                srcH,
+                canvas.Width,
+                canvas.Height,
+                job.Side,
+                avatarLayer.MirrorWithSide,
+                avatarLayer.Transform?.Anchor ?? Anchor.BottomRight,
+                avatarLayer.Transform?.X ?? 0,
+                avatarLayer.Transform?.Y ?? 0,
+                aw,
+                ah);
+            filters.Add($"[{inputIndex}:v]format=rgba,scale=w={rect.Width}:h={rect.Height}:force_original_aspect_ratio=decrease,format=yuva420p,hwupload_cuda[av]");
+            extraInputs.Add(job.AvatarPath);
+            inputIndex++;
+            filters.Add($"{current}[av]overlay_cuda=x={rect.Left}:y={rect.Top}[L2]");
+            current = "[L2]";
+        }
+
+        if (job.WavePath is not null && waveLayer is { Visible: true } && waveInfo is not null)
+        {
+            var srcW = waveInfo.Width ?? waveLayer.Transform?.Width ?? 500;
+            var srcH = waveInfo.Height ?? 100;
+            var targetWidth = waveLayer.Transform?.Width ?? 500;
+            var (ww, wh) = LayerGeometry.ScaleToFitWidth(targetWidth, srcW, srcH);
+            var rect = LayerGeometry.ResolveFittedOverlay(
+                waveLayer.Transform,
+                srcW,
+                srcH,
+                canvas.Width,
+                canvas.Height,
+                job.Side,
+                waveLayer.MirrorWithSide,
+                waveLayer.Transform?.Anchor ?? Anchor.Center,
+                waveLayer.Transform?.X ?? 0,
+                waveLayer.Transform?.Y ?? 0,
+                ww,
+                wh);
+            string waveChain;
+            if (waveInfo.HasAlpha)
+            {
+                waveChain = $"[{inputIndex}:v]format=rgba,scale=w={rect.Width}:h={rect.Height}:flags=bicubic,format=yuva420p,hwupload_cuda[wv]";
+            }
+            else
+            {
+                var tolerance = waveLayer.BlackKeyTolerance.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+                waveChain = $"[{inputIndex}:v]scale_cuda={rect.Width}:{rect.Height}:format=yuv420p,chromakey_cuda=0x000000:{tolerance}:{tolerance}[wv]";
+            }
+
+            filters.Add(waveChain);
+            extraInputs.Add(job.WavePath);
+            inputIndex++;
+            filters.Add($"{current}[wv]overlay_cuda=x={rect.Left}:y={rect.Top}[L3]");
+            current = "[L3]";
+        }
+
+        if (includeSubtitles)
+        {
+            filters.Add($"{current}hwdownload,format=yuv420p,ass=filename=sub.ass:fontsdir=fonts,hwupload_cuda[vout]");
+        }
+        else
+        {
+            filters.Add($"{current}hwdownload,format=yuv420p,hwupload_cuda[vout]");
+        }
     }
 
     private static string CoverScaleExpr(CanvasSettings canvas, double scale) =>

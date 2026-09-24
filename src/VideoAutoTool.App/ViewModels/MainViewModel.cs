@@ -13,7 +13,7 @@ public partial class MainViewModel : ObservableObject
     private bool _restoring;
 
     [ObservableProperty]
-    private string _title = "Video Auto Tool";
+    private string _title = ProductEdition.Title;
 
     [ObservableProperty]
     private int _selectedTabIndex;
@@ -22,18 +22,21 @@ public partial class MainViewModel : ObservableObject
     public SourceViewModel SourceViewModel { get; }
     public QueueViewModel QueueViewModel { get; }
     public SettingsViewModel SettingsViewModel { get; }
+    public DownloadViewModel DownloadViewModel { get; }
 
     public MainViewModel(
         DesignViewModel designViewModel,
         SourceViewModel sourceViewModel,
         QueueViewModel queueViewModel,
         SettingsViewModel settingsViewModel,
+        DownloadViewModel downloadViewModel,
         IUiDialogs dialogs)
     {
         DesignViewModel = designViewModel;
         SourceViewModel = sourceViewModel;
         QueueViewModel = queueViewModel;
         SettingsViewModel = settingsViewModel;
+        DownloadViewModel = downloadViewModel;
         _dialogs = dialogs;
         SourceViewModel.GoToQueueRequested += (_, _) => SelectedTabIndex = 2;
 
@@ -68,6 +71,18 @@ public partial class MainViewModel : ObservableObject
             {
                 QueueViewModel.CancelCommand.Execute(null);
             }
+        }
+
+        if (DownloadViewModel.IsRunning)
+        {
+            if (!_dialogs.Confirm(
+                    "Đang tải nguồn",
+                    "Đang tải video nguồn. Thoát sẽ dừng tải.\nBạn có chắc muốn thoát?"))
+            {
+                return false;
+            }
+
+            DownloadViewModel.CancelDownloads();
         }
 
         return SaveWorkspace();
@@ -154,6 +169,18 @@ public partial class MainViewModel : ObservableObject
                 SettingsViewModel.BackgroundScalePercent =
                     TemplateRenderOptions.ClampScalePercent(session.BackgroundScalePercent);
             }
+
+            if (session.RenderHeight > 0)
+            {
+                SettingsViewModel.RenderHeight = TemplateRenderOptions.NormalizeOutputHeight(session.RenderHeight);
+            }
+
+            DownloadViewModel.Restore(
+                session.YtDlpPath,
+                session.CookiesPath,
+                session.DownloadParallel < 1 ? 2 : session.DownloadParallel,
+                session.VideoQuality,
+                session.DownloadChannels);
         }
         finally
         {
@@ -167,19 +194,21 @@ public partial class MainViewModel : ObservableObject
         SourceViewModel.PropertyChanged += (_, _) => RefreshDirtyTitle();
         SourceViewModel.WorkspaceChanged += (_, _) => RefreshDirtyTitle();
         SettingsViewModel.PropertyChanged += (_, _) => RefreshDirtyTitle();
+        DownloadViewModel.PropertyChanged += (_, _) => RefreshDirtyTitle();
+        DownloadViewModel.WorkspaceChanged += (_, _) => RefreshDirtyTitle();
         SourceViewModel.Folders.CollectionChanged += (_, _) => RefreshDirtyTitle();
     }
 
     private void RefreshDirtyTitle()
     {
         if (_restoring) return;
-        Title = HasUnsavedChanges ? "Video Auto Tool *" : "Video Auto Tool";
+        Title = HasUnsavedChanges ? ProductEdition.Title + " *" : ProductEdition.Title;
     }
 
     private void MarkSaved()
     {
         _savedFingerprint = SessionStore.Fingerprint(BuildSession());
-        Title = "Video Auto Tool";
+        Title = ProductEdition.Title;
     }
 
     private AppSession BuildSession() => new()
@@ -193,6 +222,12 @@ public partial class MainViewModel : ObservableObject
         ParallelCount = SettingsViewModel.ParallelCount,
         QueueBatchSize = SettingsViewModel.QueueBatchSize,
         RenderCount = SourceViewModel.RenderCount,
-        BackgroundScalePercent = SettingsViewModel.BackgroundScalePercent
+        BackgroundScalePercent = SettingsViewModel.BackgroundScalePercent,
+        RenderHeight = SettingsViewModel.RenderHeight,
+        YtDlpPath = DownloadViewModel.YtDlpPath,
+        CookiesPath = DownloadViewModel.CookiesPath,
+        DownloadParallel = DownloadViewModel.DownloadParallel,
+        VideoQuality = DownloadViewModel.VideoQuality,
+        DownloadChannels = DownloadViewModel.CaptureChannels()
     };
 }

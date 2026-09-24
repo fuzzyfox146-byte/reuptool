@@ -122,7 +122,7 @@ public static class RenderCommandBuilder
         return args;
     }
 
-    public static void AppendVideoEncoder(List<string> args, VideoEncoderKind encoder, int quality)
+    public static void AppendVideoEncoder(List<string> args, VideoEncoderKind encoder, int quality, bool zeroBFrames = false)
     {
         if (encoder == VideoEncoderKind.H264Nvenc)
         {
@@ -135,6 +135,11 @@ public static class RenderCommandBuilder
                 "-b:v", "0",
                 "-profile:v", "high"
             ]);
+            if (zeroBFrames)
+            {
+                args.Add("-bf");
+                args.Add("0");
+            }
         }
         else
         {
@@ -155,7 +160,8 @@ public static class RenderCommandBuilder
         string concatListPath,
         string outputPath,
         EncodeSettings encode,
-        RenderRequest request)
+        RenderRequest request,
+        bool cpuDecodeWave = false)
     {
         var duration = request.Mode switch
         {
@@ -173,6 +179,11 @@ public static class RenderCommandBuilder
         {
             args.Add("-hwaccel");
             args.Add(encode.HwAccel);
+            if (encode.KeepFramesOnGpu)
+            {
+                args.Add("-hwaccel_output_format");
+                args.Add(encode.HwAccel);
+            }
         }
 
         args.Add("-f");
@@ -186,13 +197,15 @@ public static class RenderCommandBuilder
         {
             var isImage = input.EndsWith(".png", StringComparison.OrdinalIgnoreCase) ||
                           input.EndsWith(".webp", StringComparison.OrdinalIgnoreCase);
+            var decodeOnCpu = isImage || (encode.KeepFramesOnGpu && cpuDecodeWave && input == job.WavePath);
             AddMediaInput(
                 args,
                 input,
-                isImage ? null : encode.HwAccel,
+                decodeOnCpu ? null : encode.HwAccel,
                 loopImage: isImage,
                 loopWave: input == job.WavePath,
-                fps: template.Canvas.Fps);
+                fps: template.Canvas.Fps,
+                keepFramesOnGpu: encode.KeepFramesOnGpu && !decodeOnCpu);
         }
 
         args.Add("-filter_complex");
@@ -202,7 +215,7 @@ public static class RenderCommandBuilder
         args.Add("-map");
         args.Add("0:a:0");
 
-        AppendVideoEncoder(args, encode.Encoder, template.Output.Quality);
+        AppendVideoEncoder(args, encode.Encoder, template.Output.Quality, encode.KeepFramesOnGpu);
         AppendOutputSize(args, template.Canvas);
 
         args.Add("-shortest");
@@ -226,7 +239,8 @@ public static class RenderCommandBuilder
         string? hwAccel,
         bool loopImage,
         bool loopWave,
-        int fps)
+        int fps,
+        bool keepFramesOnGpu = false)
     {
         if (loopImage)
         {
@@ -245,6 +259,11 @@ public static class RenderCommandBuilder
         {
             args.Add("-hwaccel");
             args.Add(hwAccel);
+            if (keepFramesOnGpu)
+            {
+                args.Add("-hwaccel_output_format");
+                args.Add(hwAccel);
+            }
         }
 
         args.Add("-i");

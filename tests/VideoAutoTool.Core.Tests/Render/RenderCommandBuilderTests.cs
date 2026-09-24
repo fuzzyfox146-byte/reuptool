@@ -44,4 +44,27 @@ public class RenderCommandBuilderTests
         Assert.Equal("-hwaccel", args[extraInput - 2]);
         Assert.Equal("cuda", args[extraInput - 1]);
     }
+
+    [Fact]
+    public void BuildCachedArguments_KeepsCudaFramesAndDisablesBFrames()
+    {
+        var template = TemplateDefaults.CreateCo139();
+        var driver = Path.GetFullPath(@"D:\src\a.mp4");
+        var concat = Path.GetFullPath(@"D:\tmp\list.txt");
+        var wave = Path.GetFullPath(@"D:\a\wave.mp4");
+        var output = Path.GetFullPath(@"D:\out\a.mp4.part");
+        var job = new RenderJobPlan(
+            1, driver, "a", null, 8,
+            [new BackgroundSegment(Path.GetFullPath(@"D:\bg\clip.mp4"), 10)],
+            null, wave, "right", template.StylePresets[0], output);
+        var graph = new FilterGraphPlan([concat, wave], "[vout]copy[vout]", "[vout]");
+        var encode = new EncodeSettings(VideoEncoderKind.H264Nvenc, "cuda", KeepFramesOnGpu: true);
+
+        var args = RenderCommandBuilder.BuildCachedArguments(
+            template, job, graph, driver, concat, output, encode, new RenderRequest(RenderMode.Full));
+
+        Assert.Contains("-hwaccel_output_format", args);
+        Assert.Contains("-bf", args);
+        Assert.Equal("0", args[args.IndexOf("-bf") + 1]);
+    }
 }

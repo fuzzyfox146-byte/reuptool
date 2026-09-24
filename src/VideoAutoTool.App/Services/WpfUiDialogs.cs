@@ -21,6 +21,28 @@ public sealed class WpfUiDialogs : IUiDialogs
         return dialog.ShowDialog() == true ? dialog.FolderName : null;
     }
 
+    public string? PickFile(string title, string filter, string? initialDirectory = null)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = title,
+            Filter = filter,
+            CheckFileExists = true,
+            Multiselect = false
+        };
+        if (!string.IsNullOrWhiteSpace(initialDirectory) && Directory.Exists(initialDirectory))
+        {
+            dialog.InitialDirectory = initialDirectory;
+        }
+
+        return dialog.ShowDialog() == true ? dialog.FileName : null;
+    }
+
+    public bool Confirm(string title, string message)
+    {
+        return MessageBox.Show(message, title, MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes;
+    }
+
     public string? PickFontFile()
     {
         var dialog = new OpenFileDialog

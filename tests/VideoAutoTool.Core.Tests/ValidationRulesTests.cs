@@ -1,6 +1,7 @@
 using VideoAutoTool.Core.Ffmpeg;
 using VideoAutoTool.Core.Fonts;
 using VideoAutoTool.Core.Scanning;
+using VideoAutoTool.Core.Subtitles;
 using VideoAutoTool.Core.Templates;
 using VideoAutoTool.Core.Validation;
 
@@ -56,6 +57,37 @@ public class ValidationRulesTests
         Assert.False(report.CanRender(2));
         Assert.Contains(report.Issues, i => i.Code == "E030" && i.Scope == "video:2");
         Assert.DoesNotContain(report.Issues, i => i.Code == "E030" && i.Scope == "video:1");
+    }
+
+    [Fact]
+    public void SubtitleName_MatchesEnSuffix_RejectsSameNumberDifferentTitle()
+    {
+        const string video = "056 🔴 Chosen One： Heaven Confirms You Mastered A New Power. ✨👑.mp4";
+        const string srt = "056 🔴 Chosen One： Heaven Confirms You Mastered A New Power. ✨👑.en.srt";
+        Assert.True(SubtitleNameMatcher.IsMatch(video, srt));
+        Assert.True(SubtitleNameMatcher.IsMatch(
+            "010 Title.mp4",
+            "010 Title.de.srt"));
+
+        const string otherVideo = "047 Chosen One： God Is Bringing The Right Person Into Your Life — Age Is Not A Barrier To His Plan.mp4";
+        const string otherSrt = "047 Chosen One, God Says： Your BEST YEARS Are Still Ahead.en.srt";
+        Assert.False(SubtitleNameMatcher.IsMatch(otherVideo, otherSrt));
+
+        var driver = new ScannedFile(otherVideo, otherVideo, 47, Path.GetFileName(otherVideo));
+        var wrong = new ScannedFile(otherSrt, otherSrt, 47, Path.GetFileName(otherSrt));
+        var paired = SubtitleNameMatcher.Resolve(driver, [wrong]);
+        Assert.Null(paired.Match);
+        Assert.Equal(wrong.FileName, paired.SameNumberMismatch?.FileName);
+    }
+
+    [Fact]
+    public void CheckSubtitleNames_ReportsSameNumberTitleMismatch()
+    {
+        var root = CreateValidationRoot(includeSubForVideo1: true, includeSubForVideo2: false);
+        WriteSrt(root, "002 Chosen One, God Says.en.srt");
+        var issues = ValidationRules.CheckSubtitleNames(TemplateDefaults.CreateCo139(), root);
+        Assert.Contains(issues, i => i.Code == "E035" && i.Message.Contains("002 d2.mp4", StringComparison.Ordinal));
+        Assert.DoesNotContain(issues, i => i.Code == "E030" && i.Scope == "video:1");
     }
 
     [Fact]

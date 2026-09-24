@@ -40,8 +40,13 @@ public static class ValidationRules
 
     public static ValidationIssue E030(int videoIndex, string driverStem) => new(
         "E030", ValidationLevel.Error, $"video:{videoIndex}",
-        $"Video '{driverStem}' không có file SRT tương ứng.",
-        "Thêm file .srt khớp số hoặc tên driver.");
+        $"Video '{driverStem}' không có file SRT trùng tên.",
+        "Thêm file .srt trùng tên video. Chỉ được thêm mã ngôn ngữ như .en hoặc .de trước .srt.");
+
+    public static ValidationIssue E035(int videoIndex, string driverFile, string srtFile) => new(
+        "E035", ValidationLevel.Error, $"video:{videoIndex}",
+        $"Video '{driverFile}' không khớp SRT cùng số '{srtFile}'.",
+        "Đổi tên SRT cho trùng tên video (chỉ thêm mã ngôn ngữ như .en), không ghép theo mỗi số thứ tự.");
 
     public static ValidationIssue E031(int videoIndex, string fileName) => new(
         "E031", ValidationLevel.Error, $"video:{videoIndex}",
@@ -330,6 +335,37 @@ public static class ValidationRules
         }
     }
 
+    public static List<ValidationIssue> CheckSubtitleNames(Template template, string root)
+    {
+        var drivers = FileScanner.ScanFolder(root, template.Driver.Folder, template.Driver.Extensions, template.Driver.NumberPattern);
+        var subLayer = template.Layers.FirstOrDefault(l => l.Type == LayerType.Subtitle);
+        var subs = subLayer?.Source is null
+            ? Array.Empty<ScannedFile>()
+            : FileScanner.ScanFolder(root, subLayer.Source.Folder, subLayer.Source.Extensions, template.Driver.NumberPattern);
+
+        var issues = new List<ValidationIssue>();
+        for (var i = 0; i < drivers.Count; i++)
+        {
+            var driver = drivers[i];
+            var paired = SubtitleNameMatcher.Resolve(driver, subs);
+            if (paired.Match is not null)
+            {
+                continue;
+            }
+
+            if (paired.SameNumberMismatch is not null)
+            {
+                issues.Add(E035(i + 1, driver.FileName, paired.SameNumberMismatch.FileName));
+            }
+            else
+            {
+                issues.Add(E030(i + 1, driver.FileName));
+            }
+        }
+
+        return issues;
+    }
+
     public static async Task ValidateDriverSubsAsync(
         ValidationContext ctx,
         IMediaProbe probe,
@@ -357,23 +393,22 @@ public static class ValidationRules
                 continue;
             }
 
-            ScannedFile? subFile = null;
-            if (driver.Number is int num && ctx.SubByNumber.TryGetValue(num, out var numbered))
+            var paired = SubtitleNameMatcher.Resolve(driver, ctx.Subs);
+            if (paired.Match is null)
             {
-                subFile = numbered;
-            }
-            else
-            {
-                var stem = Path.GetFileNameWithoutExtension(driver.FileName);
-                subFile = ctx.Subs.FirstOrDefault(s =>
-                    Path.GetFileNameWithoutExtension(s.FileName).StartsWith(stem, StringComparison.OrdinalIgnoreCase));
-            }
+                if (paired.SameNumberMismatch is not null)
+                {
+                    issues.Add(E035(videoIndex, driver.FileName, paired.SameNumberMismatch.FileName));
+                }
+                else
+                {
+                    issues.Add(E030(videoIndex, driver.FileName));
+                }
 
-            if (subFile is null)
-            {
-                issues.Add(E030(videoIndex, Path.GetFileNameWithoutExtension(driver.FileName)));
                 continue;
             }
+
+            var subFile = paired.Match;
 
             List<Cue> cues;
             try

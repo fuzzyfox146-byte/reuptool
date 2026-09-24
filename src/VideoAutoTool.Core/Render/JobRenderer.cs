@@ -77,7 +77,26 @@ public sealed class JobRenderer
             var preferNvenc = template.Output.Encoder is OutputEncoder.Auto or OutputEncoder.Nvenc;
             var encode = await _encoderSelector.SelectAsync(preferNvenc, cancellationToken).ConfigureAwait(false);
 
+            List<string> BuildCachedRenderArguments(bool useGpu)
+            {
+                var graph = useGpu
+                    ? FilterGraphBuilder.BuildCachedGpu(template, job, concatListPath!, avatarInfo, waveInfo, job.SubPath is not null)
+                    : FilterGraphBuilder.BuildCached(template, job, concatListPath!, avatarInfo, waveInfo, job.SubPath is not null);
+                var enc = useGpu ? encode with { KeepFramesOnGpu = true } : encode;
+                return RenderCommandBuilder.BuildCachedArguments(
+                    template,
+                    job,
+                    graph,
+                    job.DriverPath,
+                    concatListPath!,
+                    partPath,
+                    enc,
+                    request,
+                    cpuDecodeWave: useGpu && waveInfo?.HasAlpha == true);
+            }
+
             List<string> args;
+            var retryCpuGraph = false;
             if (useCache && _assetService is not null)
             {
                 var assetService = _assetService;
@@ -98,17 +117,9 @@ public sealed class JobRenderer
 
                 concatListPath = ConcatListBuilder.Create(cachedBackgrounds!, tempDir);
 
-                var graph = FilterGraphBuilder.BuildCached(template, job, concatListPath, avatarInfo, waveInfo, job.SubPath is not null);
-
-                args = RenderCommandBuilder.BuildCachedArguments(
-                    template,
-                    job,
-                    graph,
-                    job.DriverPath,
-                    concatListPath,
-                    partPath,
-                    encode,
-                    request);
+                retryCpuGraph = encode.Encoder == VideoEncoderKind.H264Nvenc
+                    && FilterGraphBuilder.ShouldUseGpuOverlay(template.Canvas);
+                args = BuildCachedRenderArguments(retryCpuGraph);
             }
             else
             {
@@ -140,6 +151,17 @@ public sealed class JobRenderer
             };
 
             var result = await _runner.RunAsync(args, tempDir, cancellationToken, progress, duration).ConfigureAwait(false);
+            if (result.ExitCode != 0 && retryCpuGraph)
+            {
+                if (File.Exists(partPath))
+                {
+                    File.Delete(partPath);
+                }
+
+                args = BuildCachedRenderArguments(useGpu: false);
+                result = await _runner.RunAsync(args, tempDir, cancellationToken, progress, duration).ConfigureAwait(false);
+            }
+
             if (result.ExitCode != 0)
             {
                 throw new InvalidOperationException($"ffmpeg render failed: {result.Tail}");

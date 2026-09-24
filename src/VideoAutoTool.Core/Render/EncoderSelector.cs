@@ -8,7 +8,7 @@ public enum VideoEncoderKind
     H264Nvenc
 }
 
-public sealed record EncodeSettings(VideoEncoderKind Encoder, string? HwAccel);
+public sealed record EncodeSettings(VideoEncoderKind Encoder, string? HwAccel, bool KeepFramesOnGpu = false);
 
 public sealed class EncoderSelector
 {

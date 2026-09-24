@@ -15,6 +15,7 @@ internal static class FfmpegProcessRunner
     {
         var stdout = new StringBuilder();
         var stderrLines = new Queue<string>();
+        var progressEnded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var sw = Stopwatch.StartNew();
 
         using var process = new Process();
@@ -42,6 +43,11 @@ internal static class FfmpegProcessRunner
             while (await process.StandardOutput.ReadLineAsync(cancellationToken).ConfigureAwait(false) is { } line)
             {
                 stdout.AppendLine(line);
+                if (line.Equals("progress=end", StringComparison.Ordinal))
+                {
+                    progressEnded.TrySetResult();
+                }
+
                 if (progress is not null && totalDurationSeconds is > 0 &&
                     line.StartsWith("out_time_us=", StringComparison.Ordinal))
                 {
@@ -68,9 +74,24 @@ internal static class FfmpegProcessRunner
             }
         }, cancellationToken);
 
+        var forcedOk = false;
         try
         {
-            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+            var exitTask = process.WaitForExitAsync(cancellationToken);
+            var first = await Task.WhenAny(exitTask, progressEnded.Task).ConfigureAwait(false);
+            if (first != exitTask)
+            {
+                var grace = Task.Delay(TimeSpan.FromSeconds(15), cancellationToken);
+                var finished = await Task.WhenAny(exitTask, grace).ConfigureAwait(false);
+                if (finished != exitTask && !process.HasExited)
+                {
+                    KillProcessTree(process);
+                    await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+                    forcedOk = true;
+                }
+            }
+
+            await exitTask.ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -78,7 +99,7 @@ internal static class FfmpegProcessRunner
             throw;
         }
 
-        await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(false);
+        await Task.WhenAny(Task.WhenAll(stdoutTask, stderrTask), Task.Delay(3000)).ConfigureAwait(false);
         sw.Stop();
 
         string tail;
@@ -87,7 +108,8 @@ internal static class FfmpegProcessRunner
             tail = string.Join(Environment.NewLine, stderrLines);
         }
 
-        return new FfmpegResult(process.ExitCode, tail, sw.Elapsed, stdout.ToString());
+        var exitCode = forcedOk ? 0 : process.ExitCode;
+        return new FfmpegResult(exitCode, tail, sw.Elapsed, stdout.ToString());
     }
 
     private static void KillProcessTree(Process process)

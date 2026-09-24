@@ -278,6 +278,22 @@ public sealed partial class SourceViewModel : ObservableObject
         try
         {
             var template = BuildRenderTemplate();
+            if (!testOnly)
+            {
+                var subtitleErrors = ValidationRules.CheckSubtitleNames(template, RootFolder);
+                if (subtitleErrors.Count > 0)
+                {
+                    ValidationMessages.Clear();
+                    foreach (var issue in subtitleErrors)
+                    {
+                        ValidationMessages.Add(issue);
+                    }
+
+                    Status = $"{subtitleErrors.Count} video lỗi phụ đề (tên SRT không khớp video nguồn). Chưa đưa vào hàng đợi.";
+                    return;
+                }
+            }
+
             Status = "Đang lập kế hoạch job…";
             var plan = await _planner.PlanAsync(template, RootFolder, CancellationToken.None);
             if (plan.Jobs.Count == 0)
@@ -347,6 +363,7 @@ public sealed partial class SourceViewModel : ObservableObject
         }
 
         TemplateRenderOptions.ApplyBackgroundScalePercent(template, _settings.BackgroundScalePercent);
+        TemplateRenderOptions.ApplyOutputHeight(template, _settings.RenderHeight);
 
         _workingTemplate = template;
         return template;

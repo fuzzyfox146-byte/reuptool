@@ -41,6 +41,43 @@ public class FilterGraphBuilderTests
         Assert.DoesNotContain("pad=1280:720", graph.FilterComplex);
     }
 
+    [Fact]
+    public void ShouldUseGpuOverlay_OnlyAt720pAndAbove()
+    {
+        Assert.True(FilterGraphBuilder.ShouldUseGpuOverlay(new CanvasSettings { Width = 1280, Height = 720 }));
+        Assert.False(FilterGraphBuilder.ShouldUseGpuOverlay(new CanvasSettings { Width = 854, Height = 480 }));
+    }
+
+    [Fact]
+    public void BuildCachedGpu_UploadsPngAndKeysWaveOnCuda()
+    {
+        var template = TemplateDefaults.CreateCo139();
+        var job = CreateJob(template, avatar: @"D:\a\avatar.png", wave: @"D:\a\wave.mp4", sub: "sub.srt");
+        var avatar = new MediaInfo(@"D:\a\avatar.png", null, false, null, true, 400, 800, null, "rgba", true, "png");
+        var wave = new MediaInfo(@"D:\a\wave.mp4", 2, false, null, true, 640, 160, 25, "yuv420p", false, "h264");
+        var graph = FilterGraphBuilder.BuildCachedGpu(template, job, @"D:\tmp\list.txt", avatar, wave, includeSubtitles: true);
+
+        Assert.Contains("scale_cuda=1280:720:format=yuv420p", graph.FilterComplex);
+        Assert.Contains("format=yuva420p,hwupload_cuda[av]", graph.FilterComplex);
+        Assert.Contains("overlay_cuda=", graph.FilterComplex);
+        Assert.Contains("chromakey_cuda=0x000000:", graph.FilterComplex);
+        Assert.Contains("ass=filename=sub.ass:fontsdir=fonts", graph.FilterComplex);
+        Assert.DoesNotContain("lumakey=", graph.FilterComplex);
+    }
+
+    [Fact]
+    public void BuildCachedGpu_AlphaWaveStaysSoftwareUntilUpload()
+    {
+        var template = TemplateDefaults.CreateCo139();
+        var job = CreateJob(template, avatar: null, wave: @"D:\a\wave.mov", sub: null);
+        var wave = new MediaInfo(@"D:\a\wave.mov", 2, false, null, true, 640, 160, 25, "argb", true, "qtrle");
+        var graph = FilterGraphBuilder.BuildCachedGpu(template, job, @"D:\tmp\list.txt", null, wave, includeSubtitles: false);
+
+        Assert.Contains("format=yuva420p,hwupload_cuda[wv]", graph.FilterComplex);
+        Assert.DoesNotContain("chromakey_cuda", graph.FilterComplex);
+        Assert.Contains("hwdownload,format=yuv420p,hwupload_cuda[vout]", graph.FilterComplex);
+    }
+
     private static RenderJobPlan CreateJob(Template template, string? avatar, string? wave, string? sub) =>
         new(
             1,

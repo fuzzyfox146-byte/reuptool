@@ -7,6 +7,10 @@ public interface IUiDialogs
 {
     string? PickFolder(string title, string? initialDirectory = null);
 
+    string? PickFile(string title, string filter, string? initialDirectory = null);
+
+    bool Confirm(string title, string message);
+
     string? PickFontFile();
 
     string? PickOpenJson(string title, string? initialDirectory = null);

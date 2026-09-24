@@ -9,6 +9,7 @@ using VideoAutoTool.Core.Subtitles;
 using VideoAutoTool.Core.Templates;
 using VideoAutoTool.Core.Validation;
 using VideoAutoTool.Core.Cache;
+using VideoAutoTool.Core.Download;
 using VideoAutoTool.App.ViewModels;
 using VideoAutoTool.App.Services;
 
@@ -69,6 +70,10 @@ public partial class App : Application
         services.AddSingleton<SettingsViewModel>();
         services.AddSingleton<QueueViewModel>();
         services.AddSingleton<SourceViewModel>();
+        services.AddSingleton<IYtDlpRunner, YtDlpProcessRunner>();
+        services.AddSingleton<SourceDownloader>();
+        services.AddSingleton<MultiChannelDownloader>();
+        services.AddSingleton<DownloadViewModel>();
         services.AddSingleton<MainViewModel>();
 
         // Views

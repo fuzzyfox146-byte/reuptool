@@ -1,5 +1,6 @@
 using VideoAutoTool.Core.Ffmpeg;
 using VideoAutoTool.Core.Scanning;
+using VideoAutoTool.Core.Subtitles;
 using VideoAutoTool.Core.Templates;
 
 namespace VideoAutoTool.Core.Planning;
@@ -40,7 +41,6 @@ public sealed class JobPlanner
             ? []
             : FileScanner.ScanFolder(root, bgLayer.Source.Folder, bgLayer.Source.Extensions, template.Driver.NumberPattern);
 
-        var subByNumber = BuildSubLookup(subs, warnings);
         var backgroundPointer = 0;
         var durationCache = new Dictionary<string, MediaInfo>(StringComparer.OrdinalIgnoreCase);
 
@@ -69,7 +69,11 @@ public sealed class JobPlanner
             var pickIndex = jobs.Count;
             var side = ResolveSide(template.AvatarSide, pickIndex);
             var preset = ResolveStylePreset(template, pickIndex, warnings);
-            var subPath = MatchSub(driver, subs, subByNumber, warnings);
+            var subPath = MatchSub(driver, subs, warnings);
+            if (subPath is null)
+            {
+                continue;
+            }
             var avatarPath = avatars.Count == 0 ? null : avatars[pickIndex % avatars.Count].AbsolutePath;
             var wavePath = waves.Count == 0 ? null : waves[pickIndex % waves.Count].AbsolutePath;
             var outputPath = BuildOutputPath(root, template, driver);
@@ -91,42 +95,33 @@ public sealed class JobPlanner
         return new PlanResult(jobs, warnings);
     }
 
-    private static Dictionary<int, ScannedFile> BuildSubLookup(IReadOnlyList<ScannedFile> subs, List<PlanWarning> warnings)
-    {
-        var map = new Dictionary<int, ScannedFile>();
-        foreach (var group in subs.Where(s => s.Number.HasValue).GroupBy(s => s.Number!.Value))
-        {
-            var ordered = group.OrderBy(s => s.FileName, new NaturalSortComparer()).ToList();
-            map[group.Key] = ordered[0];
-            if (ordered.Count > 1)
-            {
-                warnings.Add(new PlanWarning(PlanWarningLevel.Warning,
-                    $"Duplicate SRT number {group.Key}; using '{ordered[0].FileName}'."));
-            }
-        }
-
-        return map;
-    }
-
     private static string? MatchSub(
         ScannedFile driver,
         IReadOnlyList<ScannedFile> subs,
-        Dictionary<int, ScannedFile> subByNumber,
         List<PlanWarning> warnings)
     {
-        if (driver.Number is int number && subByNumber.TryGetValue(number, out var numbered))
+        var paired = SubtitleNameMatcher.Resolve(driver, subs);
+        if (paired.Match is not null)
         {
-            return numbered.AbsolutePath;
+            if (paired.MatchCount > 1)
+            {
+                warnings.Add(new PlanWarning(PlanWarningLevel.Warning,
+                    $"Several SRT files match '{driver.FileName}'; using '{paired.Match.FileName}'."));
+            }
+
+            return paired.Match.AbsolutePath;
         }
 
-        var stem = Path.GetFileNameWithoutExtension(driver.FileName);
-        var match = subs.FirstOrDefault(s => Path.GetFileNameWithoutExtension(s.FileName).StartsWith(stem, StringComparison.OrdinalIgnoreCase));
-        if (match is not null)
+        if (paired.SameNumberMismatch is not null)
         {
-            return match.AbsolutePath;
+            warnings.Add(new PlanWarning(PlanWarningLevel.Warning,
+                $"SRT number matches but the title differs: '{driver.FileName}' vs '{paired.SameNumberMismatch.FileName}'. Skipped."));
+        }
+        else
+        {
+            warnings.Add(new PlanWarning(PlanWarningLevel.Warning, $"No SRT matched for driver '{driver.FileName}'. Skipped."));
         }
 
-        warnings.Add(new PlanWarning(PlanWarningLevel.Warning, $"No SRT matched for driver '{driver.FileName}'."));
         return null;
     }
 
