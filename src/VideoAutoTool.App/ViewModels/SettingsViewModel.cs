@@ -22,9 +22,21 @@ public partial class SettingsViewModel : ObservableObject
     private int _parallelCount = 2;
 
     [ObservableProperty]
+    private int _queueBatchSize = 9;
+
+    [ObservableProperty]
     private int _backgroundScalePercent = TemplateRenderOptions.DefaultBackgroundScalePercent;
 
     public IReadOnlyList<int> ParallelOptions { get; } = [1, 2, 3];
+
+    partial void OnQueueBatchSizeChanged(int value)
+    {
+        var clamped = Math.Clamp(value, 1, 99);
+        if (clamped != value)
+        {
+            QueueBatchSize = clamped;
+        }
+    }
 
     partial void OnParallelCountChanged(int value)
     {

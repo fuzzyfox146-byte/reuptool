@@ -22,6 +22,7 @@ public sealed partial class SourceViewModel : ObservableObject
     private readonly SettingsViewModel _settings;
     private Template _workingTemplate;
     private bool _suppressDesignSelection;
+    private bool _planning;
 
     [ObservableProperty]
     private string _rootFolder = "";
@@ -40,6 +41,9 @@ public sealed partial class SourceViewModel : ObservableObject
 
     [ObservableProperty]
     private string _status = "Chọn thư mục gốc bằng nút Duyệt — không cần gõ đường dẫn.";
+
+    [ObservableProperty]
+    private int _renderCount = 3;
 
     public SourceViewModel(
         JobPlanner planner,
@@ -93,12 +97,18 @@ public sealed partial class SourceViewModel : ObservableObject
         _suppressDesignSelection = false;
         ApplySelectedDesignTemplate();
 
+        ApplyOverrides(overrides);
+    }
+
+    private void ApplyOverrides(IReadOnlyList<FolderOverride> overrides)
+    {
         foreach (var item in overrides)
         {
             var row = Folders.FirstOrDefault(r => r.RoleId == item.RoleId);
             if (row is null || string.IsNullOrWhiteSpace(item.Folder)) continue;
             ApplyFolderOverride(_workingTemplate, row, item.Folder);
             row.FolderPath = item.Folder;
+            row.AbsolutePath = item.Folder;
         }
 
         RefreshFolderStats();
@@ -109,10 +119,19 @@ public sealed partial class SourceViewModel : ObservableObject
     public event EventHandler? WorkspaceChanged;
 
     public bool CanStartRender =>
-        !_queue.IsRunning
+        !_planning
         && !string.IsNullOrWhiteSpace(RootFolder)
         && Directory.Exists(RootFolder)
         && Folders.Where(f => f.UsedForRender).All(f => f.IsReady);
+
+    partial void OnRenderCountChanged(int value)
+    {
+        var clamped = Math.Clamp(value, 1, 999);
+        if (clamped != value)
+        {
+            RenderCount = clamped;
+        }
+    }
 
     [RelayCommand]
     private void BrowseRoot()
@@ -196,14 +215,21 @@ public sealed partial class SourceViewModel : ObservableObject
     }
 
     [RelayCommand(CanExecute = nameof(CanStartRender))]
+    private async Task RenderCountAsync()
+    {
+        await StartRenderAsync(testOnly: false, limit: RenderCount);
+    }
+
+    [RelayCommand(CanExecute = nameof(CanStartRender))]
     private async Task RenderAllAsync()
     {
-        await StartRenderAsync(testOnly: false);
+        await StartRenderAsync(testOnly: false, limit: null);
     }
 
     public void ReloadDesignList()
     {
         var previous = SelectedDesign?.Path;
+        var overrides = CaptureFolderOverrides();
         _suppressDesignSelection = true;
         DesignOptions.Clear();
         DesignOptions.Add(new DesignChoice(null, "Thiết kế đang mở"));
@@ -215,6 +241,7 @@ public sealed partial class SourceViewModel : ObservableObject
         SelectedDesign = DesignOptions.FirstOrDefault(d => d.Path == previous) ?? DesignOptions[0];
         _suppressDesignSelection = false;
         ApplySelectedDesignTemplate();
+        ApplyOverrides(overrides);
     }
 
     partial void OnSelectedDesignChanged(DesignChoice? value)
@@ -238,7 +265,7 @@ public sealed partial class SourceViewModel : ObservableObject
         RebuildRows();
     }
 
-    private async Task StartRenderAsync(bool testOnly)
+    private async Task StartRenderAsync(bool testOnly, int? limit = null)
     {
         if (!CanStartRender)
         {
@@ -246,6 +273,8 @@ public sealed partial class SourceViewModel : ObservableObject
             return;
         }
 
+        _planning = true;
+        NotifyRenderCommands();
         try
         {
             var template = BuildRenderTemplate();
@@ -270,12 +299,30 @@ public sealed partial class SourceViewModel : ObservableObject
             }
             else
             {
+                if (limit is int requested)
+                {
+                    var take = Math.Clamp(requested, 1, plan.Jobs.Count);
+                    plan = new PlanResult(plan.Jobs.Take(take).ToList(), plan.Warnings);
+                }
+
                 request = new RenderRequest(RenderMode.Full);
-                Status = $"Render thật {plan.Jobs.Count} job.";
+                Status = $"Đưa {plan.Jobs.Count} video của nguồn này vào hàng đợi.";
+            }
+
+            var sourceName = Path.GetFileName(RootFolder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            if (string.IsNullOrWhiteSpace(sourceName))
+            {
+                sourceName = "Nguồn";
             }
 
             GoToQueueRequested?.Invoke(this, EventArgs.Empty);
-            await _queue.StartAsync(template, plan, request, _settings.ParallelCount);
+            await _queue.EnqueueAsync(
+                sourceName,
+                template,
+                plan,
+                request,
+                _settings.ParallelCount,
+                _settings.QueueBatchSize);
         }
         catch (Exception ex)
         {
@@ -283,6 +330,7 @@ public sealed partial class SourceViewModel : ObservableObject
         }
         finally
         {
+            _planning = false;
             NotifyRenderCommands();
         }
     }
@@ -374,6 +422,7 @@ public sealed partial class SourceViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(CanStartRender));
         TestRenderCommand.NotifyCanExecuteChanged();
+        RenderCountCommand.NotifyCanExecuteChanged();
         RenderAllCommand.NotifyCanExecuteChanged();
     }
 

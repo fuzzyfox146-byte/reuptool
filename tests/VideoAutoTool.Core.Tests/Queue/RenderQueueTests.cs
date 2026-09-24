@@ -265,6 +265,123 @@ public sealed class RenderQueueTests : IDisposable
         Assert.Contains(statusChanges, sc => sc.Status == JobStatus.Done);
     }
 
+    [Fact]
+    public void EnqueueIntake_PromotesOneBatchPerSourceAndKeepsTheRestWaiting()
+    {
+        var (queue, _, planA) = CreateQueue(20);
+        var template = TemplateDefaults.CreateCo139();
+        var (_, planB) = CreatePlan(20);
+
+        var idA = queue.EnqueueIntake("KenhA", template, planA, batchSize: 9);
+        var idB = queue.EnqueueIntake("KenhB", template, planB, batchSize: 2);
+
+        Assert.Equal("01", idA);
+        Assert.Equal("02", idB);
+
+        var main = queue.GetMainJobs();
+        Assert.Equal(18, main.Count);
+        Assert.All(main.Take(9), job => Assert.Equal("01", job.IntakeId));
+        Assert.All(main.Skip(9), job => Assert.Equal("02", job.IntakeId));
+        Assert.Equal(11, queue.GetWaitingJobs().Count(job => job.IntakeId == "01"));
+        Assert.Equal(11, queue.GetWaitingJobs().Count(job => job.IntakeId == "02"));
+    }
+
+    [Fact]
+    public async Task EnqueueIntake_RefillsEverySourceWhenMainHasNoPendingJob()
+    {
+        var (queue, runner, planA) = CreateQueue(4);
+        var template = TemplateDefaults.CreateCo139();
+        var (_, planB) = CreatePlan(4);
+        runner.HoldRenders = 8;
+        runner.RenderDelay = TimeSpan.Zero;
+
+        queue.EnqueueIntake("KenhA", template, planA, batchSize: 2);
+        queue.EnqueueIntake("KenhB", template, planB, batchSize: 2);
+        Assert.Equal(4, queue.GetWaitingJobs().Count);
+
+        var run = queue.RunAsync(maxParallel: 1);
+        await WaitUntilAsync(() => runner.RenderedJobs.Count >= 1);
+        for (var i = 0; i < 3; i++)
+        {
+            runner.ReleaseRender();
+            await WaitUntilAsync(() => runner.RenderedJobs.Count >= i + 2);
+        }
+
+        Assert.Empty(queue.GetWaitingJobs());
+        Assert.Equal(8, queue.GetMainJobs().Count);
+
+        for (var i = 0; i < 5; i++)
+        {
+            runner.ReleaseRender();
+        }
+
+        await run.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.All(queue.GetJobs().Where(j => j.Status != JobStatus.Skipped), j => Assert.Equal(JobStatus.Done, j.Status));
+    }
+
+    [Fact]
+    public async Task Pause_StopsTheRunningJobAndResumeRendersItAgain()
+    {
+        var (queue, runner, plan) = CreateQueue(2);
+        runner.RenderDelay = TimeSpan.FromSeconds(3);
+        queue.AddJobsFromPlan(plan);
+
+        var run = queue.RunAsync(maxParallel: 1);
+        await WaitUntilAsync(() => runner.RenderedJobs.Count >= 1);
+        queue.Pause();
+        await WaitUntilAsync(() => queue.GetJobs().Any(j => j.Status == JobStatus.Paused));
+
+        var mid = queue.GetJobs();
+        Assert.Contains(mid, j => j.Status == JobStatus.Paused);
+        Assert.Contains(mid, j => j.Status == JobStatus.Pending);
+
+        queue.Resume();
+        await run.WaitAsync(TimeSpan.FromSeconds(8));
+        Assert.All(queue.GetJobs(), j => Assert.Equal(JobStatus.Done, j.Status));
+    }
+
+    [Fact]
+    public async Task ResetToContinue_RendersCancelledJobsAgain()
+    {
+        var (queue, _, plan) = CreateQueue(4);
+        var template = TemplateDefaults.CreateCo139();
+        queue.EnqueueIntake("KenhA", template, plan, batchSize: 2);
+        queue.CancelAll();
+        await queue.RunAsync(maxParallel: 1);
+
+        var reset = queue.ResetToContinue();
+        Assert.Equal(4, reset);
+        Assert.All(queue.GetJobs(), job => Assert.Equal(JobStatus.Pending, job.Status));
+
+        await queue.RunAsync(maxParallel: 1);
+        Assert.All(queue.GetJobs(), job => Assert.Equal(JobStatus.Done, job.Status));
+    }
+
+    [Fact]
+    public void Clear_RemovesEveryJob()
+    {
+        var (queue, _, plan) = CreateQueue(3);
+        var template = TemplateDefaults.CreateCo139();
+        queue.EnqueueIntake("KenhA", template, plan, batchSize: 2);
+
+        queue.Clear();
+
+        Assert.Empty(queue.GetJobs());
+        Assert.Empty(queue.GetMainJobs());
+        Assert.Empty(queue.GetWaitingJobs());
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        var until = DateTime.UtcNow.AddSeconds(5);
+        while (!condition() && DateTime.UtcNow < until)
+        {
+            await Task.Delay(20);
+        }
+
+        Assert.True(condition(), "Timed out waiting for queue condition.");
+    }
+
     private (RenderQueue Queue, MockJobRunner Runner, PlanResult Plan) CreateQueue(int jobCount)
     {
         var (template, plan) = CreatePlan(jobCount);

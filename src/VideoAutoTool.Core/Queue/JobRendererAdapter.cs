@@ -25,10 +25,13 @@ public sealed class JobRendererAdapter : IJobRunner
         CancellationToken cancellationToken,
         IProgress<double>? progress = null)
     {
+        var request = job.ClipSeconds is > 0
+            ? new RenderRequest(RenderMode.Clip, job.ClipSeconds)
+            : new RenderRequest(RenderMode.Full);
         await _renderer.RenderAsync(
             template,
             plan,
-            ActiveRequest,
+            request,
             job.OutputPath,
             useCache: true,  // Use cache by default for queue rendering
             progress,

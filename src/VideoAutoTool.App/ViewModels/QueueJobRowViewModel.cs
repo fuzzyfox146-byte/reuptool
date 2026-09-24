@@ -27,6 +27,9 @@ public sealed partial class QueueJobRowViewModel : ObservableObject
     public string Preset { get; }
 
     [ObservableProperty]
+    private string _sourceLabel = "—";
+
+    [ObservableProperty]
     private string _outputFile = "";
 
     [ObservableProperty]
@@ -55,6 +58,9 @@ public sealed partial class QueueJobRowViewModel : ObservableObject
 
     public void Apply(RenderJobItem job)
     {
+        SourceLabel = string.IsNullOrEmpty(job.IntakeId)
+            ? "—"
+            : string.IsNullOrEmpty(job.IntakeName) ? job.IntakeId : $"{job.IntakeId} {job.IntakeName}";
         OutputFile = job.OutputPath;
         OutputShort = ShortOutputName(job.OutputPath);
         Progress = job.Progress;
@@ -64,6 +70,7 @@ public sealed partial class QueueJobRowViewModel : ObservableObject
         StatusShort = job.Status switch
         {
             JobStatus.Pending => "Chờ",
+            JobStatus.Paused => "Tạm dừng",
             JobStatus.Running => $"Đang encode {job.Progress:P0}",
             JobStatus.Done => DoneLabel(job),
             JobStatus.Failed => FailedLabel(job),
@@ -98,7 +105,7 @@ public sealed partial class QueueJobRowViewModel : ObservableObject
     {
         var lines = new List<string>
         {
-            $"Job #{job.JobIndex}",
+            string.IsNullOrEmpty(job.IntakeId) ? $"Job #{job.JobIndex}" : $"Nguồn {job.IntakeId} {job.IntakeName} · job #{job.JobIndex}",
             $"Trạng thái: {StatusShort}",
             $"File xuất: {job.OutputPath}",
             $"Video nguồn: {job.DriverPath}",

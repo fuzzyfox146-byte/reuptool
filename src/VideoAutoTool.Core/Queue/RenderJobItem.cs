@@ -40,6 +40,18 @@ public sealed class RenderJobItem
     /// <summary>Error message if job failed.</summary>
     public string? ErrorMessage { get; set; }
 
+    /// <summary>Display id of the source intake that owns this job (01, 02, …).</summary>
+    public string IntakeId { get; set; } = "";
+
+    /// <summary>Folder or channel name shown with the intake.</summary>
+    public string IntakeName { get; set; } = "";
+
+    /// <summary>True when the job has been pulled into the main queue.</summary>
+    public bool Promoted { get; set; } = true;
+
+    /// <summary>When set, render only this many seconds (test clip).</summary>
+    public double? ClipSeconds { get; set; }
+
     /// <summary>
     /// Creates a RenderJobItem from a RenderJobPlan.
     /// </summary>

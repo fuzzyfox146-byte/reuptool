@@ -28,6 +28,10 @@ public sealed class AppSession
 
     public int ParallelCount { get; set; } = 2;
 
+    public int QueueBatchSize { get; set; } = 9;
+
+    public int RenderCount { get; set; } = 3;
+
     public int BackgroundScalePercent { get; set; } = 150;
 }
 

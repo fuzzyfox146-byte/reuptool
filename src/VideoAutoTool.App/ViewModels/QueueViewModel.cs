@@ -18,6 +18,10 @@ public sealed partial class QueueViewModel : ObservableObject
     private readonly Stopwatch _elapsed = new();
     private RenderQueue? _queue;
     private CancellationTokenSource? _cts;
+    private DispatcherTimer? _syncTimer;
+    private bool _loopRunning;
+    private int _lastParallel = 2;
+    private long _lastUiProgress;
 
     private readonly EncoderSelector _encoders;
 
@@ -47,7 +51,11 @@ public sealed partial class QueueViewModel : ObservableObject
 
     public ObservableCollection<QueueJobRowViewModel> Jobs { get; } = new();
 
+    public ObservableCollection<IntakeGroupViewModel> Intakes { get; } = new();
+
     public ObservableCollection<string> LogLines { get; } = new();
+
+    public bool CanEditBatchSize => !IsRunning;
 
     [ObservableProperty]
     private int _jobCount;
@@ -79,63 +87,87 @@ public sealed partial class QueueViewModel : ObservableObject
 
     public event EventHandler? BusyChanged;
 
-    public async Task StartAsync(
+    public Task EnqueueAsync(
+        string sourceName,
         Template template,
         PlanResult plan,
         RenderRequest request,
         int maxParallel,
+        int batchSize,
         CancellationToken cancellationToken = default)
     {
-        if (IsRunning)
+        if (_queue is null)
         {
-            throw new InvalidOperationException("Queue is already running.");
+            var storePath = Path.Combine(Path.GetTempPath(), "vat-ui-queue.json");
+            var store = new JobStore(storePath);
+            store.Clear();
+            _queue = new RenderQueue(_adapter, store, template, plan);
+            _queue.ProgressChanged += OnProgressChanged;
+            _queue.JobStatusChanged += OnJobStatusChanged;
         }
 
-        Jobs.Clear();
-        LogLines.Clear();
-        SelectedJob = null;
-        OverallProgress = 0;
-        JobCount = plan.Jobs.Count;
+        var clipSeconds = request.Mode == RenderMode.Clip ? request.ClipSeconds : null;
+        var id = _queue.EnqueueIntake(
+            sourceName,
+            template,
+            plan,
+            batchSize,
+            skipExisting: request.Mode == RenderMode.Full && template.Output.SkipExisting,
+            clipSeconds: clipSeconds);
+
+        SyncFromQueue();
+        SelectedJob ??= Jobs.FirstOrDefault();
         Status = request.Mode == RenderMode.Clip
-            ? $"Render thử {request.ClipSeconds ?? 8:0}s — {plan.Jobs.Count} job."
-            : $"Render thật — {plan.Jobs.Count} job.";
+            ? $"Đã thêm nguồn {id} · {sourceName} (render thử)."
+            : $"Đã thêm nguồn {id} · {sourceName}: {plan.Jobs.Count} video.";
+        AppendLog($"{Status} Hàng chính nhận tối đa {Math.Clamp(batchSize, 1, 99)} video mỗi lượt.");
+        _lastParallel = Math.Clamp(maxParallel, 1, 3);
+        StartLoop(maxParallel, cancellationToken);
+        return Task.CompletedTask;
+    }
 
-        _adapter.ActiveRequest = request;
-        var storePath = Path.Combine(Path.GetTempPath(), "vat-ui-queue.json");
-        var store = new JobStore(storePath);
-        store.Clear();
-
-        _queue?.Dispose();
-        _queue = new RenderQueue(_adapter, store, template, plan);
-        _queue.ProgressChanged += OnProgressChanged;
-        _queue.JobStatusChanged += OnJobStatusChanged;
-        _queue.AddJobsFromPlan(plan, skipExisting: request.Mode == RenderMode.Full && template.Output.SkipExisting);
-
-        foreach (var job in _queue.GetJobs())
+    private void StartLoop(int maxParallel, CancellationToken cancellationToken)
+    {
+        if (_loopRunning || _queue is null)
         {
-            Jobs.Add(new QueueJobRowViewModel(job));
-            AppendLog($"#{job.JobIndex} {Path.GetFileName(job.OutputPath)} — {job.Status}");
+            return;
         }
 
-        SelectedJob = Jobs.FirstOrDefault();
-
-        JobCount = Jobs.Count;
+        _loopRunning = true;
+        _cts?.Dispose();
         _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         IsRunning = true;
         IsPaused = false;
         BusyChanged?.Invoke(this, EventArgs.Empty);
-        PauseCommand.NotifyCanExecuteChanged();
-        ResumeCommand.NotifyCanExecuteChanged();
-        CancelCommand.NotifyCanExecuteChanged();
+        NotifyQueueCommands();
+        if (!_elapsed.IsRunning)
+        {
+            _elapsed.Restart();
+        }
 
-        _elapsed.Restart();
         _elapsedTimer.Start();
+        EnsureSyncTimer();
         RefreshElapsed();
-        AppendLog($"Bắt đầu hàng đợi — {Math.Clamp(maxParallel, 1, 3)} video cùng lúc.");
+        var parallel = Math.Clamp(maxParallel, 1, 3);
+        var token = _cts.Token;
+        _ = RunLoopAsync(parallel, token);
+    }
 
+    private async Task RunLoopAsync(int maxParallel, CancellationToken token)
+    {
+        var restarted = false;
         try
         {
-            await _queue.RunAsync(Math.Clamp(maxParallel, 1, 3), _cts.Token).ConfigureAwait(true);
+            AppendLog($"Hàng đợi chạy — {maxParallel} video cùng lúc.");
+            await _queue!.RunAsync(maxParallel, token).ConfigureAwait(true);
+            if (_queue.HasOpenWork && !token.IsCancellationRequested)
+            {
+                _loopRunning = false;
+                restarted = true;
+                StartLoop(maxParallel, CancellationToken.None);
+                return;
+            }
+
             var progress = _queue.GetProgress();
             Status = progress.FailedJobs > 0
                 ? $"Xong: {progress.CompletedJobs}/{progress.TotalJobs} thành công, {progress.FailedJobs} lỗi."
@@ -151,19 +183,22 @@ public sealed partial class QueueViewModel : ObservableObject
         {
             Status = $"Lỗi hàng đợi: {ex.Message}";
             AppendLog(Status);
-            throw;
         }
         finally
         {
-            _elapsed.Stop();
-            _elapsedTimer.Stop();
-            RefreshElapsed();
-            IsRunning = false;
-            IsPaused = false;
-            BusyChanged?.Invoke(this, EventArgs.Empty);
-            PauseCommand.NotifyCanExecuteChanged();
-            ResumeCommand.NotifyCanExecuteChanged();
-            CancelCommand.NotifyCanExecuteChanged();
+            if (!restarted)
+            {
+                _loopRunning = false;
+                _elapsed.Stop();
+                _elapsedTimer.Stop();
+                _syncTimer?.Stop();
+                RefreshElapsed();
+                IsRunning = false;
+                IsPaused = false;
+                BusyChanged?.Invoke(this, EventArgs.Empty);
+                NotifyQueueCommands();
+                SyncFromQueue();
+            }
         }
     }
 
@@ -172,7 +207,7 @@ public sealed partial class QueueViewModel : ObservableObject
     {
         _queue?.Pause();
         IsPaused = true;
-        Status = "Tạm dừng (job đang chạy vẫn tiếp tục đến hết).";
+        Status = "Đã tạm dừng. Video đang encode bị dừng và sẽ render lại từ đầu khi bấm Tiếp tục.";
         AppendLog(Status);
         PauseCommand.NotifyCanExecuteChanged();
         ResumeCommand.NotifyCanExecuteChanged();
@@ -200,6 +235,42 @@ public sealed partial class QueueViewModel : ObservableObject
 
     private bool CanCancel() => IsRunning;
 
+    private bool CanRenderAgain =>
+        !IsRunning && _queue is not null && _queue.GetJobs().Any(job => job.Status is JobStatus.Cancelled or JobStatus.Failed);
+
+    private bool CanClearQueue =>
+        !IsRunning && _queue is not null && _queue.GetJobs().Count > 0;
+
+    [RelayCommand(CanExecute = nameof(CanRenderAgain))]
+    private void RenderAgain()
+    {
+        if (_queue is null) return;
+        var reset = _queue.ResetToContinue();
+        SyncFromQueue();
+        Status = $"Render tiếp {reset} video đã hủy hoặc lỗi. Video đã xong giữ nguyên.";
+        AppendLog(Status);
+        NotifyQueueCommands();
+        StartLoop(_lastParallel, CancellationToken.None);
+    }
+
+    [RelayCommand(CanExecute = nameof(CanClearQueue))]
+    private void ClearQueue()
+    {
+        _queue?.Clear();
+        _queue?.Dispose();
+        _queue = null;
+        Jobs.Clear();
+        Intakes.Clear();
+        SelectedJob = null;
+        OverallProgress = 0;
+        JobCount = 0;
+        _elapsed.Reset();
+        ElapsedText = "00:00:00";
+        Status = "Đã xóa hàng đợi. Thêm nguồn mới để render.";
+        AppendLog(Status);
+        NotifyQueueCommands();
+    }
+
     private bool CanCopySelectedDetails() => SelectedJob is not null;
 
     [RelayCommand(CanExecute = nameof(CanCopySelectedDetails))]
@@ -218,9 +289,24 @@ public sealed partial class QueueViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(CanPause));
         OnPropertyChanged(nameof(CanResume));
+        OnPropertyChanged(nameof(CanEditBatchSize));
         PauseCommand.NotifyCanExecuteChanged();
         ResumeCommand.NotifyCanExecuteChanged();
         CancelCommand.NotifyCanExecuteChanged();
+        RenderAgainCommand.NotifyCanExecuteChanged();
+        ClearQueueCommand.NotifyCanExecuteChanged();
+    }
+
+    private void NotifyQueueCommands()
+    {
+        OnPropertyChanged(nameof(CanPause));
+        OnPropertyChanged(nameof(CanResume));
+        OnPropertyChanged(nameof(CanEditBatchSize));
+        PauseCommand.NotifyCanExecuteChanged();
+        ResumeCommand.NotifyCanExecuteChanged();
+        CancelCommand.NotifyCanExecuteChanged();
+        RenderAgainCommand.NotifyCanExecuteChanged();
+        ClearQueueCommand.NotifyCanExecuteChanged();
     }
 
     partial void OnIsPausedChanged(bool value)
@@ -233,6 +319,13 @@ public sealed partial class QueueViewModel : ObservableObject
 
     private void OnProgressChanged(object? sender, QueueProgress progress)
     {
+        var now = Environment.TickCount64;
+        if (now - _lastUiProgress < 200)
+        {
+            return;
+        }
+
+        _lastUiProgress = now;
         RunOnUi(() =>
         {
             OverallProgress = progress.OverallProgress;
@@ -245,8 +338,8 @@ public sealed partial class QueueViewModel : ObservableObject
             if (_queue is null) return;
             foreach (var job in _queue.GetJobs())
             {
-                var row = Jobs.FirstOrDefault(j => j.JobId == job.Id);
-                row?.Apply(job);
+                if (job.Status != JobStatus.Running) continue;
+                Jobs.FirstOrDefault(j => j.JobId == job.Id)?.Apply(job);
             }
         });
     }
@@ -255,30 +348,110 @@ public sealed partial class QueueViewModel : ObservableObject
     {
         RunOnUi(() =>
         {
-            var row = Jobs.FirstOrDefault(j => j.JobId == job.Id);
-            if (row is null)
+            SyncFromQueue();
+            if (job.Status == JobStatus.Pending)
             {
-                row = new QueueJobRowViewModel(job);
-                Jobs.Add(row);
-            }
-            else
-            {
-                row.Apply(job);
+                return;
             }
 
+            var row = Jobs.FirstOrDefault(j => j.JobId == job.Id);
             var elapsed = RenderTiming.Elapsed(job.StartedAt, job.FinishedAt);
             var timing = elapsed is { } took
                 ? " — " + RenderTiming.Describe(took, job.DurationSeconds)
                 : "";
-            AppendLog($"#{job.JobIndex} {row.StatusShort}: {Path.GetFileName(job.OutputPath)}{timing}");
+            var who = string.IsNullOrEmpty(job.IntakeId) ? $"#{job.JobIndex}" : $"{job.IntakeId} #{job.JobIndex}";
+            var label = row?.StatusShort ?? job.Status.ToString();
+            AppendLog($"{who} {label}: {Path.GetFileName(job.OutputPath)}{timing}");
             if (!string.IsNullOrWhiteSpace(job.ErrorMessage))
             {
                 AppendLog($"  {job.ErrorMessage}");
-                SelectedJob = row;
+                if (row is not null)
+                {
+                    SelectedJob = row;
+                }
             }
 
             CopySelectedDetailsCommand.NotifyCanExecuteChanged();
         });
+    }
+
+    private void EnsureSyncTimer()
+    {
+        if (_syncTimer is null)
+        {
+            _syncTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+            _syncTimer.Tick += (_, _) => SyncFromQueue();
+        }
+
+        _syncTimer.Start();
+    }
+
+    private void SyncFromQueue()
+    {
+        if (_queue is null) return;
+
+        var main = _queue.GetMainJobs();
+        var mainIds = new HashSet<string>(main.Select(job => job.Id));
+        for (var i = Jobs.Count - 1; i >= 0; i--)
+        {
+            if (!mainIds.Contains(Jobs[i].JobId))
+            {
+                Jobs.RemoveAt(i);
+            }
+        }
+
+        for (var i = 0; i < main.Count; i++)
+        {
+            var job = main[i];
+            var existing = Jobs.FirstOrDefault(row => row.JobId == job.Id);
+            if (existing is null)
+            {
+                Jobs.Insert(Math.Min(i, Jobs.Count), new QueueJobRowViewModel(job));
+                continue;
+            }
+
+            existing.Apply(job);
+            var current = Jobs.IndexOf(existing);
+            if (current >= 0 && current != i)
+            {
+                Jobs.Move(current, Math.Min(i, Jobs.Count - 1));
+            }
+        }
+
+        SyncIntakes(_queue.GetJobs());
+        var progress = _queue.GetProgress();
+        OverallProgress = progress.OverallProgress;
+        JobCount = progress.TotalJobs;
+        if (SelectedJob is not null && !Jobs.Contains(SelectedJob))
+        {
+            SelectedJob = Jobs.FirstOrDefault();
+        }
+    }
+
+    private void SyncIntakes(IReadOnlyList<RenderJobItem> jobs)
+    {
+        var groups = jobs
+            .Where(job => !string.IsNullOrEmpty(job.IntakeId))
+            .GroupBy(job => job.IntakeId)
+            .OrderBy(group => group.Key, StringComparer.Ordinal)
+            .ToList();
+
+        foreach (var group in groups)
+        {
+            var waiting = group
+                .Where(job => !job.Promoted && job.Status == JobStatus.Pending)
+                .Select(job => Path.GetFileName(job.OutputPath))
+                .ToList();
+            var done = group.Count(job => job.Status == JobStatus.Done);
+            var row = Intakes.FirstOrDefault(intake => intake.Id == group.Key);
+            if (row is null)
+            {
+                row = new IntakeGroupViewModel(group.Key, group.First().IntakeName);
+                Intakes.Add(row);
+            }
+
+            row.Update(waiting, done, group.Count());
+        }
     }
 
     private void AppendLog(string line)
@@ -300,12 +473,14 @@ public sealed partial class QueueViewModel : ObservableObject
     private static void RunOnUi(Action action)
     {
         var dispatcher = Application.Current?.Dispatcher;
-        if (dispatcher is null || dispatcher.CheckAccess())
+        if (dispatcher is null)
         {
             action();
             return;
         }
 
-        dispatcher.Invoke(action);
+        // Always defer. Status events are raised while the queue lock is held;
+        // running the handler inline on the UI thread would deadlock on that lock.
+        dispatcher.BeginInvoke(action, DispatcherPriority.Background);
     }
 }

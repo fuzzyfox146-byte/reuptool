@@ -70,19 +70,24 @@ public partial class MainViewModel : ObservableObject
             }
         }
 
-        if (!HasUnsavedChanges)
+        return SaveWorkspace();
+    }
+
+    /// <summary>
+    /// Remembers source folders, template choice, render count, and settings. Does not overwrite the design file.
+    /// </summary>
+    private bool SaveWorkspace()
+    {
+        try
         {
+            SessionStore.Save(BuildSession());
+            MarkSaved();
             return true;
         }
-
-        switch (_dialogs.ConfirmUnsavedClose())
+        catch (Exception ex)
         {
-            case UnsavedCloseChoice.Save:
-                return TrySaveAll();
-            case UnsavedCloseChoice.Discard:
-                return true;
-            default:
-                return false;
+            _dialogs.ShowError("Không lưu được", ex.Message);
+            return false;
         }
     }
 
@@ -134,6 +139,16 @@ public partial class MainViewModel : ObservableObject
                 SettingsViewModel.ParallelCount = Math.Clamp(session.ParallelCount, 1, 3);
             }
 
+            if (session.QueueBatchSize >= 1)
+            {
+                SettingsViewModel.QueueBatchSize = Math.Clamp(session.QueueBatchSize, 1, 99);
+            }
+
+            if (session.RenderCount >= 1)
+            {
+                SourceViewModel.RenderCount = Math.Clamp(session.RenderCount, 1, 999);
+            }
+
             if (session.BackgroundScalePercent > 0)
             {
                 SettingsViewModel.BackgroundScalePercent =
@@ -176,6 +191,8 @@ public partial class MainViewModel : ObservableObject
         FolderOverrides = SourceViewModel.CaptureFolderOverrides(),
         FfmpegPath = SettingsViewModel.FfmpegPath,
         ParallelCount = SettingsViewModel.ParallelCount,
+        QueueBatchSize = SettingsViewModel.QueueBatchSize,
+        RenderCount = SourceViewModel.RenderCount,
         BackgroundScalePercent = SettingsViewModel.BackgroundScalePercent
     };
 }

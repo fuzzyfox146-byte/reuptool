@@ -186,7 +186,7 @@
 
                     <StackPanel Grid.Row="0">
                         <TextBlock Text="Nguồn &amp; Kiểm tra" FontSize="20" FontWeight="Bold" Margin="0,0,0,12"/>
-                        <TextBlock Text="Chọn template design để render, duyệt folder, rồi Render thử (clip ~8s job đầu) hoặc Render thật (cả hàng đợi)."
+                        <TextBlock Text="Chọn template cho kênh này, duyệt folder, rồi thêm một số video hoặc cả nguồn vào hàng đợi. Đang render vẫn thêm được nguồn khác."
                                    TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,8"/>
                         <TextBlock Text="Template design" FontWeight="Bold" Margin="0,0,0,4"/>
                         <ComboBox ItemsSource="{Binding SourceViewModel.DesignOptions}"
@@ -211,10 +211,16 @@
                                     Command="{Binding SourceViewModel.ValidateDeepCommand}"/>
                             <Button Content="Render thử" Margin="0,0,8,0"
                                     Command="{Binding SourceViewModel.TestRenderCommand}"
-                                    ToolTip="Encode ~8 giây job đầu tiên (file *_test.mp4)."/>
-                            <Button Content="Render thật"
+                                    ToolTip="Encode ~8 giây job đầu tiên (file *_test.mp4). Có thể thêm khi hàng đợi đang chạy."/>
+                            <TextBox Width="52" Margin="0,0,8,0" VerticalAlignment="Center"
+                                     ToolTip="Số video lấy từ nguồn này cho lần thêm hàng đợi."
+                                     Text="{Binding SourceViewModel.RenderCount, UpdateSourceTrigger=PropertyChanged}"/>
+                            <Button Content="Render số này" Margin="0,0,8,0"
+                                    Command="{Binding SourceViewModel.RenderCountCommand}"
+                                    ToolTip="Đưa đúng số video ở ô bên cạnh vào hàng đợi. Nguồn khác vẫn render tiếp."/>
+                            <Button Content="Render hết"
                                     Command="{Binding SourceViewModel.RenderAllCommand}"
-                                    ToolTip="Chạy toàn bộ job Full vào hàng đợi."/>
+                                    ToolTip="Đưa mọi video của nguồn này vào hàng đợi."/>
                         </StackPanel>
                         <TextBlock Text="{Binding SourceViewModel.Status}" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,12"/>
                     </StackPanel>
@@ -254,59 +260,96 @@
             <TabItem Header="Hàng đợi">
                 <Grid Margin="8">
                     <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
                         <RowDefinition Height="*"/>
                         <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="240"/>
+                        <RowDefinition Height="220"/>
                     </Grid.RowDefinitions>
 
-                    <Border Grid.Row="0" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Padding="8">
-                        <DockPanel>
-                            <Grid DockPanel.Dock="Top" Margin="0,0,0,8">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Orientation="Horizontal">
-                                    <Button Content="Tạm dừng" Margin="0,0,8,0"
-                                            Command="{Binding QueueViewModel.PauseCommand}"/>
-                                    <Button Content="Tiếp tục" Margin="0,0,8,0"
-                                            Command="{Binding QueueViewModel.ResumeCommand}"/>
-                                    <Button Content="Hủy" Background="{StaticResource ErrorBrush}"
-                                            Command="{Binding QueueViewModel.CancelCommand}"/>
-                                </StackPanel>
-                                <TextBlock Grid.Column="1" VerticalAlignment="Center" Margin="16,0"
-                                           Text="{Binding QueueViewModel.ElapsedText, StringFormat='Thời gian encode: {0}'}"/>
-                                <TextBlock Grid.Column="2" VerticalAlignment="Center"
-                                           Text="{Binding QueueViewModel.EncoderLabel}"/>
-                            </Grid>
-                            <ProgressBar DockPanel.Dock="Bottom" Height="8" Margin="0,8,0,0"
-                                         Minimum="0" Maximum="1"
-                                         Value="{Binding QueueViewModel.OverallProgress}"/>
-                            <DataGrid ItemsSource="{Binding QueueViewModel.Jobs}"
-                                      SelectedItem="{Binding QueueViewModel.SelectedJob}"
-                                      AutoGenerateColumns="False" IsReadOnly="True"
-                                      HeadersVisibility="Column"
-                                      SelectionMode="Single">
-                                <DataGrid.Columns>
-                                    <DataGridTextColumn Header="Format" Binding="{Binding Format}" Width="70"/>
-                                    <DataGridTextColumn Header="Preset" Binding="{Binding Preset}" Width="70"/>
-                                    <DataGridTemplateColumn Header="Output File" Width="220">
-                                        <DataGridTemplateColumn.CellTemplate>
-                                            <DataTemplate>
-                                                <TextBlock Text="{Binding OutputShort}"
-                                                           ToolTip="{Binding OutputFile}"
-                                                           TextTrimming="CharacterEllipsis"/>
-                                            </DataTemplate>
-                                        </DataGridTemplateColumn.CellTemplate>
-                                    </DataGridTemplateColumn>
-                                    <DataGridTextColumn Header="Status" Binding="{Binding StatusShort}" Width="160"/>
-                                </DataGrid.Columns>
-                            </DataGrid>
-                        </DockPanel>
-                    </Border>
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="Tạm dừng" Margin="0,0,8,0"
+                                    Command="{Binding QueueViewModel.PauseCommand}"/>
+                            <Button Content="Tiếp tục" Margin="0,0,8,0"
+                                    Command="{Binding QueueViewModel.ResumeCommand}"/>
+                            <Button Content="Hủy" Margin="0,0,8,0" Background="{StaticResource ErrorBrush}"
+                                    Command="{Binding QueueViewModel.CancelCommand}"/>
+                            <Button Content="Render tiếp" Margin="0,0,8,0"
+                                    Command="{Binding QueueViewModel.RenderAgainCommand}"
+                                    ToolTip="Đưa video đã hủy và video lỗi về chờ, rồi chạy lại. Video đã xong giữ nguyên."/>
+                            <Button Content="Xóa hàng đợi"
+                                    Command="{Binding QueueViewModel.ClearQueueCommand}"
+                                    ToolTip="Xóa hết job trên màn hình để thêm nguồn mới."/>
+                        </StackPanel>
+                        <TextBlock Grid.Column="1" VerticalAlignment="Center" Margin="16,0"
+                                   Text="{Binding QueueViewModel.ElapsedText, StringFormat='Thời gian encode: {0}'}"/>
+                        <TextBlock Grid.Column="2" VerticalAlignment="Center"
+                                   Text="{Binding QueueViewModel.EncoderLabel}"/>
+                    </Grid>
 
-                    <DockPanel Grid.Row="1" Margin="0,8,0,4">
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="8"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Padding="8">
+                            <DockPanel>
+                                <TextBlock DockPanel.Dock="Top" Text="Hàng chính" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <ProgressBar DockPanel.Dock="Bottom" Height="8" Margin="0,8,0,0"
+                                             Minimum="0" Maximum="1"
+                                             Value="{Binding QueueViewModel.OverallProgress}"/>
+                                <DataGrid ItemsSource="{Binding QueueViewModel.Jobs}"
+                                          SelectedItem="{Binding QueueViewModel.SelectedJob}"
+                                          AutoGenerateColumns="False" IsReadOnly="True"
+                                          HeadersVisibility="Column"
+                                          SelectionMode="Single">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="Nguồn" Binding="{Binding SourceLabel}" Width="120"/>
+                                        <DataGridTemplateColumn Header="File xuất" Width="*">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding OutputShort}"
+                                                               ToolTip="{Binding OutputFile}"
+                                                               TextTrimming="CharacterEllipsis"/>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTextColumn Header="Trạng thái" Binding="{Binding StatusShort}" Width="170"/>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </DockPanel>
+                        </Border>
+                        <Border Grid.Column="2" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Padding="8">
+                            <DockPanel>
+                                <TextBlock DockPanel.Dock="Top" Text="Nguồn đang chờ" FontWeight="Bold" Margin="0,0,0,6"/>
+                                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                    <ItemsControl ItemsSource="{Binding QueueViewModel.Intakes}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Expander Header="{Binding Header}" IsExpanded="{Binding IsExpanded}" Margin="0,0,0,6">
+                                                    <ItemsControl ItemsSource="{Binding WaitingFiles}" Margin="8,0,0,4">
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate>
+                                                                <TextBlock Text="{Binding}" TextTrimming="CharacterEllipsis" ToolTip="{Binding}"/>
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                </Expander>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </ScrollViewer>
+                            </DockPanel>
+                        </Border>
+                    </Grid>
+
+                    <DockPanel Grid.Row="2" Margin="0,8,0,4">
                         <Button DockPanel.Dock="Right" Content="Copy lỗi / chi tiết"
                                 Command="{Binding QueueViewModel.CopySelectedDetailsCommand}"
                                 Padding="10,2" Margin="8,0,0,0"
@@ -315,14 +358,14 @@
                         <TextBlock Margin="12,0,0,0" Foreground="{StaticResource TextSecondaryBrush}"
                                    Text="{Binding QueueViewModel.Status}"/>
                     </DockPanel>
-                    <Grid Grid.Row="2">
+                    <Grid Grid.Row="3">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="8"/>
                             <ColumnDefinition Width="*"/>
                         </Grid.ColumnDefinitions>
                         <DockPanel Grid.Column="0">
-                            <TextBlock DockPanel.Dock="Top" Text="Chi tiết job đã chọn" FontWeight="Bold" Margin="0,0,0,4"/>
+                            <TextBlock DockPanel.Dock="Top" Text="Chi tiết / lỗi" FontWeight="Bold" Margin="0,0,0,4"/>
                             <TextBox Text="{Binding QueueViewModel.SelectedJob.DetailBody, Mode=OneWay}"
                                      IsReadOnly="True"
                                      TextWrapping="Wrap"
@@ -360,6 +403,13 @@
                                    Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,8"/>
                         <TextBlock TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,16"
                                    Text="FFmpeg đi kèm app. Encode dùng NVENC (GPU); overlay/phụ đề vẫn chạy CPU nên CPU khoảng 50% là bình thường. RTX 5060 chạy 2 job cùng lúc được."/>
+
+                        <Label Content="Số video mỗi lượt một nguồn:"/>
+                        <TextBox Width="80" HorizontalAlignment="Left" Margin="0,0,0,4"
+                                 IsEnabled="{Binding QueueViewModel.CanEditBatchSize}"
+                                 Text="{Binding SettingsViewModel.QueueBatchSize, UpdateSourceTrigger=PropertyChanged}"/>
+                        <TextBlock TextWrapping="Wrap" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,16"
+                                   Text="Ví dụ 9: mỗi lần thêm nguồn, hàng chính nhận 9 video nguồn đó. Phần còn lại nằm bên phải. Khi hàng chính hết video đang chờ, nạp tiếp 9 video mỗi nguồn. Chỉ sửa khi không có video đang render."/>
 
                         <Label Content="Số video render cùng lúc:"/>
                         <ComboBox ItemsSource="{Binding SettingsViewModel.ParallelOptions}"

@@ -41,8 +41,8 @@ public sealed class JobStore
             var jobs = JsonSerializer.Deserialize<List<RenderJobItem>>(json, JsonOptions)
                 ?? new List<RenderJobItem>();
 
-            // Reset Running jobs to Pending on load (crashed/interrupted)
-            foreach (var job in jobs.Where(j => j.Status == JobStatus.Running))
+            // Reset Running/Paused jobs to Pending on load (crashed/interrupted).
+            foreach (var job in jobs.Where(j => j.Status is JobStatus.Running or JobStatus.Paused))
             {
                 job.Status = JobStatus.Pending;
                 job.StartedAt = null;

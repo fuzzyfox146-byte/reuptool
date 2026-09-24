@@ -9,9 +9,17 @@ namespace VideoAutoTool.Core.Tests.Queue;
 /// </summary>
 internal sealed class MockJobRunner : IJobRunner
 {
+    private readonly SemaphoreSlim _release = new(0);
+    private int _started;
+
     public List<string> RenderedJobs { get; } = new();
     public TimeSpan RenderDelay { get; set; } = TimeSpan.FromMilliseconds(50);
     public Func<RenderJobItem, Exception?>? FailCondition { get; set; }
+
+    /// <summary>When &gt; 0, the first N renders wait until <see cref="ReleaseRender"/>.</summary>
+    public int HoldRenders { get; set; }
+
+    public void ReleaseRender() => _release.Release();
 
     public async Task RenderAsync(
         RenderJobItem job,
@@ -21,6 +29,11 @@ internal sealed class MockJobRunner : IJobRunner
         IProgress<double>? progress = null)
     {
         RenderedJobs.Add(job.Id);
+        var started = Interlocked.Increment(ref _started);
+        if (started <= HoldRenders)
+        {
+            await _release.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
 
         // Check if we should fail this job
         var exception = FailCondition?.Invoke(job);
