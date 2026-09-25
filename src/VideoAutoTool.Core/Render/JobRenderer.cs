@@ -50,7 +50,15 @@ public sealed class JobRenderer
 
         var tempDir = Path.Combine(Path.GetTempPath(), "VideoAutoTool", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDir);
-        var partPath = request.Mode == RenderMode.Frame ? outputPath : $"{outputPath}.part";
+        var duration = request.Mode switch
+        {
+            RenderMode.Clip => Math.Min(request.ClipSeconds ?? 10, job.DurationSeconds),
+            RenderMode.Frame => (request.FrameTimeSeconds ?? 0) + 0.5,
+            _ => job.DurationSeconds
+        };
+        var partPath = request.Mode == RenderMode.Frame
+            ? outputPath
+            : RenderStaging.ResolvePartPath(outputPath, RenderStaging.EstimateJobBytes(template, duration));
         string? concatListPath = null;
 
         try
@@ -76,23 +84,51 @@ public sealed class JobRenderer
 
             var preferNvenc = template.Output.Encoder is OutputEncoder.Auto or OutputEncoder.Nvenc;
             var encode = await _encoderSelector.SelectAsync(preferNvenc, cancellationToken).ConfigureAwait(false);
+            var timedJob = job with { DurationSeconds = duration };
+
+            string? bakedWavePath = null;
+            var originalHasAlpha = waveInfo?.HasAlpha == true;
+            if (useCache && _assetService is not null && job.WavePath is not null && waveInfo is not null)
+            {
+                var assetService = _assetService;
+                var wavePath = job.WavePath;
+                var wave = waveInfo;
+                await AssetPrepareGate.RunAsync(
+                    [wavePath],
+                    async () =>
+                    {
+                        bakedWavePath = await assetService.PrepareWaveAsync(
+                            template,
+                            job,
+                            wave,
+                            cancellationToken).ConfigureAwait(false);
+                    },
+                    cancellationToken).ConfigureAwait(false);
+            }
 
             List<string> BuildCachedRenderArguments(bool useGpu)
             {
+                var useBakedWave = bakedWavePath is not null && (!useGpu || originalHasAlpha);
+                var graphJob = useBakedWave ? timedJob with { WavePath = bakedWavePath } : timedJob;
+                var graphWave = useBakedWave && waveInfo is not null
+                    ? waveInfo with { Path = bakedWavePath!, HasAlpha = true }
+                    : waveInfo;
                 var graph = useGpu
-                    ? FilterGraphBuilder.BuildCachedGpu(template, job, concatListPath!, avatarInfo, waveInfo, job.SubPath is not null)
-                    : FilterGraphBuilder.BuildCached(template, job, concatListPath!, avatarInfo, waveInfo, job.SubPath is not null);
+                    ? FilterGraphBuilder.BuildCachedGpu(
+                        template, graphJob, concatListPath!, avatarInfo, graphWave, job.SubPath is not null, useBakedWave)
+                    : FilterGraphBuilder.BuildCached(
+                        template, graphJob, concatListPath!, avatarInfo, graphWave, job.SubPath is not null, useBakedWave);
                 var enc = useGpu ? encode with { KeepFramesOnGpu = true } : encode;
                 return RenderCommandBuilder.BuildCachedArguments(
                     template,
-                    job,
+                    graphJob,
                     graph,
-                    job.DriverPath,
+                    timedJob.DriverPath,
                     concatListPath!,
                     partPath,
                     enc,
                     request,
-                    cpuDecodeWave: useGpu && waveInfo?.HasAlpha == true);
+                    cpuDecodeWave: useGpu && (useBakedWave || originalHasAlpha));
             }
 
             List<string> args;
@@ -123,43 +159,37 @@ public sealed class JobRenderer
             }
             else
             {
-                var graph = FilterGraphBuilder.Build(template, job, avatarInfo, waveInfo, job.SubPath is not null);
+                var graph = FilterGraphBuilder.Build(template, timedJob, avatarInfo, waveInfo, job.SubPath is not null);
 
                 args = request.Mode == RenderMode.Frame
                     ? RenderCommandBuilder.BuildPreviewArguments(
                         template,
-                        job,
+                        timedJob,
                         graph,
-                        job.DriverPath,
+                        timedJob.DriverPath,
                         partPath,
                         request.FrameTimeSeconds ?? 0,
                         encode)
                     : RenderCommandBuilder.BuildArguments(
                         template,
-                        job,
+                        timedJob,
                         graph,
-                        job.DriverPath,
+                        timedJob.DriverPath,
                         partPath,
                         encode,
                         request);
             }
 
-            var duration = request.Mode switch
-            {
-                RenderMode.Clip => Math.Min(request.ClipSeconds ?? 10, job.DurationSeconds),
-                _ => job.DurationSeconds
-            };
-
-            var result = await _runner.RunAsync(args, tempDir, cancellationToken, progress, duration).ConfigureAwait(false);
+            RenderStaging.TryDeletePair(partPath, outputPath);
+            var result = await _runner.RunAsync(
+                args, tempDir, cancellationToken, progress, duration, partPath).ConfigureAwait(false);
             if (result.ExitCode != 0 && retryCpuGraph)
             {
-                if (File.Exists(partPath))
-                {
-                    File.Delete(partPath);
-                }
+                RenderStaging.TryDeletePair(partPath, outputPath);
 
                 args = BuildCachedRenderArguments(useGpu: false);
-                result = await _runner.RunAsync(args, tempDir, cancellationToken, progress, duration).ConfigureAwait(false);
+                result = await _runner.RunAsync(
+                    args, tempDir, cancellationToken, progress, duration, partPath).ConfigureAwait(false);
             }
 
             if (result.ExitCode != 0)
@@ -169,21 +199,12 @@ public sealed class JobRenderer
 
             if (request.Mode != RenderMode.Frame && File.Exists(partPath))
             {
-                if (File.Exists(outputPath))
-                {
-                    File.Delete(outputPath);
-                }
-
-                File.Move(partPath, outputPath);
+                RenderStaging.Promote(partPath, outputPath);
             }
         }
         catch
         {
-            if (File.Exists(partPath))
-            {
-                File.Delete(partPath);
-            }
-
+            RenderStaging.TryDeletePair(partPath, outputPath);
             throw;
         }
         finally

@@ -358,6 +358,118 @@ public sealed class RenderQueueTests : IDisposable
     }
 
     [Fact]
+    public async Task RunAsync_DiskFullDropsParallelAndRetries()
+    {
+        var (queue, runner, plan) = CreateQueue(3);
+        var attempts = new Dictionary<string, int>();
+        runner.FailCondition = job =>
+        {
+            attempts.TryGetValue(job.Id, out var count);
+            attempts[job.Id] = count + 1;
+            return count == 0
+                ? new InvalidOperationException("ffmpeg render failed: No space left on device")
+                : null;
+        };
+
+        runner.HoldRenders = 3;
+        var notices = new List<string>();
+        queue.Notice += (_, message) => notices.Add(message);
+        queue.AddJobsFromPlan(plan);
+        var run = queue.RunAsync(maxParallel: 3);
+        await WaitUntilAsync(() => runner.RenderedJobs.Count >= 3);
+        runner.ReleaseRender();
+        runner.ReleaseRender();
+        runner.ReleaseRender();
+        await run;
+
+        Assert.All(queue.GetJobs(), j => Assert.Equal(JobStatus.Done, j.Status));
+        Assert.Equal(6, runner.RenderedJobs.Count);
+        Assert.Contains(notices, message => message.Contains("Chuyển còn 1", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RunAsync_LockedPartFileDropsParallelAndRetries()
+    {
+        var (queue, runner, plan) = CreateQueue(3);
+        var attempts = new Dictionary<string, int>();
+        runner.FailCondition = job =>
+        {
+            attempts.TryGetValue(job.Id, out var count);
+            attempts[job.Id] = count + 1;
+            return count == 0
+                ? new IOException("The process cannot access the file 'out.mp4.part' because it is being used by another process.")
+                : null;
+        };
+
+        runner.HoldRenders = 3;
+        queue.AddJobsFromPlan(plan);
+        var run = queue.RunAsync(maxParallel: 3);
+        await WaitUntilAsync(() => runner.RenderedJobs.Count >= 3);
+        runner.ReleaseRender();
+        runner.ReleaseRender();
+        runner.ReleaseRender();
+        await run;
+
+        Assert.All(queue.GetJobs(), j => Assert.Equal(JobStatus.Done, j.Status));
+        Assert.Equal(6, runner.RenderedJobs.Count);
+    }
+
+    [Fact]
+    public async Task RunAsync_DiskFullAtOneParallelStaysFailed()
+    {
+        var (queue, runner, plan) = CreateQueue(1);
+        runner.FailCondition = _ => new InvalidOperationException("No space left on device");
+        queue.AddJobsFromPlan(plan);
+
+        await queue.RunAsync(maxParallel: 1);
+
+        Assert.Equal(JobStatus.Failed, queue.GetJobs()[0].Status);
+        Assert.Single(runner.RenderedJobs);
+    }
+
+    [Fact]
+    public async Task RunAsync_DiskFullAloneRetryDoesNotLoop()
+    {
+        var (queue, runner, plan) = CreateQueue(3);
+        runner.HoldRenders = 3;
+        runner.FailCondition = _ => new InvalidOperationException("No space left on device");
+        queue.AddJobsFromPlan(plan);
+        var run = queue.RunAsync(maxParallel: 3);
+        await WaitUntilAsync(() => runner.RenderedJobs.Count >= 3);
+        runner.ReleaseRender();
+        runner.ReleaseRender();
+        runner.ReleaseRender();
+        await run;
+
+        Assert.All(queue.GetJobs(), j => Assert.Equal(JobStatus.Failed, j.Status));
+        Assert.Equal(6, runner.RenderedJobs.Count);
+    }
+
+    [Fact]
+    public async Task Persist_ReloadsPlansAndRendersPendingJobs()
+    {
+        var (template, plan) = CreatePlan(2);
+        var queuePath = Path.Combine(_tempDir, $"queue-persist-{Guid.NewGuid():N}.json");
+        var store = new JobStore(queuePath);
+        var first = new RenderQueue(new MockJobRunner(), store, template, plan);
+        first.EnqueueIntake("KenhA", template, plan, batchSize: 2);
+        first.Persist();
+        first.Dispose();
+
+        var runner = new MockJobRunner();
+        var restored = new RenderQueue(runner, store, template, new PlanResult([], []));
+        var jobs = restored.GetJobs();
+        Assert.Equal(2, jobs.Count);
+        Assert.All(jobs, j => Assert.Equal(JobStatus.Pending, j.Status));
+
+        await restored.RunAsync(maxParallel: 1);
+
+        Assert.Equal(2, runner.RenderedJobs.Count);
+        Assert.All(restored.GetJobs(), j => Assert.Equal(JobStatus.Done, j.Status));
+        restored.Dispose();
+    }
+
+    [Fact]
     public void Clear_RemovesEveryJob()
     {
         var (queue, _, plan) = CreateQueue(3);

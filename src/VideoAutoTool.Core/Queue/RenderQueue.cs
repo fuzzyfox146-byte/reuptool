@@ -1,4 +1,5 @@
 using VideoAutoTool.Core.Planning;
+using VideoAutoTool.Core.Render;
 using VideoAutoTool.Core.Templates;
 
 namespace VideoAutoTool.Core.Queue;
@@ -34,6 +35,8 @@ public sealed class RenderQueue : IDisposable
     private bool _isPaused;
     private bool _cancelRequested;
     private bool _isDisposed;
+    private int _parallelLimit = 1;
+    private readonly Dictionary<string, int> _startedAtLimit = new();
     private int _batchSize;
     private int _lastBatchSize;
     private int _intakeSequence;
@@ -49,15 +52,46 @@ public sealed class RenderQueue : IDisposable
     /// </summary>
     public event EventHandler<RenderJobItem>? JobStatusChanged;
 
+    /// <summary>
+    /// Raised when a full disk forces the queue to run fewer videos at once and retry.
+    /// </summary>
+    public event EventHandler<string>? Notice;
+
     public RenderQueue(IJobRunner runner, JobStore store, Template template, PlanResult plan)
     {
         _runner = runner ?? throw new ArgumentNullException(nameof(runner));
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _template = template ?? throw new ArgumentNullException(nameof(template));
+        var snapshot = store.LoadSnapshot();
+        _jobs = snapshot.Jobs;
         _plansByDriver = plan.Jobs
             .GroupBy(j => j.DriverPath)
-            .ToDictionary(g => g.Key, g => g.Last());
-        _jobs = _store.Load();
+            .ToDictionary(g => g.Key, g => g.Last(), StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in snapshot.PlansByJobId)
+        {
+            _plansByJobId[pair.Key] = pair.Value;
+            _plansByDriver[pair.Value.DriverPath] = pair.Value;
+        }
+
+        foreach (var pair in snapshot.TemplateByIntake)
+        {
+            _templateByIntake[pair.Key] = pair.Value;
+        }
+
+        _intakeOrder.AddRange(snapshot.IntakeOrder);
+        if (_intakeOrder.Count == 0)
+        {
+            _intakeOrder.AddRange(
+                snapshot.Jobs
+                    .Select(j => j.IntakeId)
+                    .Where(id => !string.IsNullOrEmpty(id))
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(id => id, StringComparer.Ordinal));
+        }
+
+        _intakeSequence = Math.Max(snapshot.IntakeSequence, MaxIntakeSequence(_intakeOrder));
+        _batchSize = snapshot.BatchSize;
+        _lastBatchSize = snapshot.LastBatchSize > 0 ? snapshot.LastBatchSize : snapshot.BatchSize;
     }
 
     /// <summary>
@@ -191,6 +225,11 @@ public sealed class RenderQueue : IDisposable
         }
 
         _cancelRequested = false;
+        lock (_lock)
+        {
+            _parallelLimit = maxParallel;
+        }
+
         var workers = new Task[maxParallel];
         for (var i = 0; i < maxParallel; i++)
         {
@@ -447,11 +486,18 @@ public sealed class RenderQueue : IDisposable
                     }
 
                     job = _jobs.FirstOrDefault(j => j.Promoted && j.Status == JobStatus.Pending);
+                    var running = _jobs.Count(j => j.Status == JobStatus.Running);
+                    if (job is not null && running >= _parallelLimit)
+                    {
+                        job = null;
+                    }
+
                     if (job is not null)
                     {
                         job.Status = JobStatus.Running;
                         job.StartedAt = DateTime.UtcNow;
                         job.Progress = 0;
+                        _startedAtLimit[job.Id] = _parallelLimit;
                         if (!HasPromotedPendingLocked())
                         {
                             PromoteNextWaveLocked();
@@ -553,6 +599,11 @@ public sealed class RenderQueue : IDisposable
         }
         catch (Exception ex)
         {
+            if (TryRequeueAfterResourcePressure(job, ex))
+            {
+                return;
+            }
+
             job.ErrorMessage = FlattenMessages(ex);
             job.LogTail = ex.ToString();
             job.FinishedAt = DateTime.UtcNow;
@@ -621,7 +672,13 @@ public sealed class RenderQueue : IDisposable
             return (template, plan);
         }
 
-        return (template, _plansByDriver[job.DriverPath]);
+        if (_plansByDriver.TryGetValue(job.DriverPath, out var byDriver))
+        {
+            return (template, byDriver);
+        }
+
+        throw new InvalidOperationException(
+            $"Missing render plan for job {job.Id} ({job.DriverPath}). Re-add the source to the queue.");
     }
 
     private static void CancelTokens(IEnumerable<CancellationTokenSource> tokens)
@@ -639,6 +696,78 @@ public sealed class RenderQueue : IDisposable
         }
     }
 
+    private bool TryRequeueAfterResourcePressure(RenderJobItem job, Exception ex)
+    {
+        var noSpace = IsNoSpace(ex);
+        var locked = IsFileLocked(ex);
+        if (!noSpace && !locked)
+        {
+            return false;
+        }
+
+        string? notice = null;
+        lock (_lock)
+        {
+            var startedAt = _startedAtLimit.GetValueOrDefault(job.Id, _parallelLimit);
+            if (startedAt <= 1 && _parallelLimit <= 1)
+            {
+                return false;
+            }
+
+            var previous = _parallelLimit;
+            if (_parallelLimit > 1)
+            {
+                _parallelLimit--;
+            }
+
+            job.ErrorMessage = null;
+            job.LogTail = null;
+            job.FinishedAt = null;
+            job.StartedAt = null;
+            job.Progress = 0;
+            job.Status = JobStatus.Pending;
+            RaiseJobStatusChanged(job);
+            notice = noSpace
+                ? previous == _parallelLimit
+                    ? "Hết chỗ trống trên đĩa. Các video còn lại sẽ render từng cái một."
+                    : $"Hết chỗ trống trên đĩa khi render {previous} video cùng lúc. Chuyển còn {_parallelLimit} video và render lại."
+                : previous == _parallelLimit
+                    ? "File xuất đang bị khóa. Các video còn lại sẽ render từng cái một."
+                    : $"File xuất đang bị khóa khi render {previous} video cùng lúc. Chuyển còn {_parallelLimit} video và render lại.";
+        }
+
+        Notice?.Invoke(this, notice);
+        return true;
+    }
+
+    private static bool IsFileLocked(Exception ex)
+    {
+        for (var current = ex; current is not null; current = current.InnerException)
+        {
+            if (current.Message.Contains("being used by another process", StringComparison.OrdinalIgnoreCase) ||
+                current.Message.Contains("because it is being used", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsNoSpace(Exception ex)
+    {
+        for (var current = ex; current is not null; current = current.InnerException)
+        {
+            if (current.Message.Contains("No space left on device", StringComparison.OrdinalIgnoreCase) ||
+                current.Message.Contains("not enough space", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private void UpdateJobStatus(RenderJobItem job, JobStatus status)
     {
         lock (_lock)
@@ -648,20 +777,47 @@ public sealed class RenderQueue : IDisposable
         }
     }
 
+    public void Persist()
+    {
+        lock (_lock)
+        {
+            SaveState();
+        }
+    }
+
     private void SaveState()
     {
-        _store.Save(_jobs);
+        _store.SaveSnapshot(new QueueSnapshot
+        {
+            Jobs = _jobs.ToList(),
+            PlansByJobId = new Dictionary<string, RenderJobPlan>(_plansByJobId, StringComparer.Ordinal),
+            TemplateByIntake = new Dictionary<string, Template>(_templateByIntake, StringComparer.Ordinal),
+            IntakeOrder = _intakeOrder.ToList(),
+            IntakeSequence = _intakeSequence,
+            BatchSize = _batchSize,
+            LastBatchSize = _lastBatchSize
+        });
+    }
+
+    private static int MaxIntakeSequence(IEnumerable<string> ids)
+    {
+        var max = 0;
+        foreach (var id in ids)
+        {
+            if (int.TryParse(id, out var n) && n > max)
+            {
+                max = n;
+            }
+        }
+
+        return max;
     }
 
     private void CleanupTempFiles(RenderJobItem job)
     {
         try
         {
-            var partFile = job.OutputPath + ".part";
-            if (File.Exists(partFile))
-            {
-                File.Delete(partFile);
-            }
+            PartFile.TryDelete(job.OutputPath + ".part");
         }
         catch
         {

@@ -48,7 +48,9 @@ color=c=black:s=WxH:r=F:d=D,format=gbrp[base]
 - Segment durations: all full length except the last, which is `remaining`. Backgrounds are chained by the planner, not by ffmpeg.
 - Opacity over black was measured: mean luma ratio 0.604 for OPACITY=0.6 (expected 0.6).
 - Overlay `x`/`y` expressions use `W,H` (main) and `w,h` (overlay); they may be negative or exceed the canvas (overflow is cropped by overlay).
-- Looping inputs: avatar `-loop 1 -framerate F -i img`; soundwave `-stream_loop -1 -i wave.mov`; both bounded by `trim=duration=D`.
+- Avatar is a single still frame (no `-loop`): `format=rgba,scale=...` once, then `overlay=eof_action=repeat`.
+- Soundwave: `-stream_loop -1`; baked cache (scale + lumakey, qtrle argb) is used on the CPU graph. 720p black-key wave still uses `chromakey_cuda` on the original file.
+- Driver input is audio-only: `-vn -sn -dn` before `-i` so a long source does not demux unused video.
 - Soundwave with black background instead of alpha: insert `lumakey=threshold=0:tolerance=T:softness=T` after `format=rgba` (T ~ 0.12-0.15) [VERIFIED].
 - Soundwave with alpha: QuickTime `qtrle`/ProRes 4444 `.mov` decoded to rgba works [VERIFIED].
 - Layer opacity other than 1.0 on avatar/wave: append `colorchannelmixer=aa=X` after `format=rgba` [VERIFIED for wave].
@@ -60,7 +62,7 @@ color=c=black:s=WxH:r=F:d=D,format=gbrp[base]
 - Detect NVENC by a tiny test encode (`-f lavfi -i color=c=black:s=256x256:d=0.2 -c:v h264_nvenc -f null -`); exit code 0 => usable; else libx264.
   Cache the detection result per ffmpeg path.
 - Tags: `-colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv -movflags +faststart`
-- Audio: `-map 0:a:0 -c:a aac -b:a 192k -ar 48000`
+- Audio: filter `[0:a]atrim,asetpts,aformat[aout]` then `-map [aout]`. Do not use `-map 0:a:0` (ffmpeg 7 mux queue overflow on long files).
 
 ## Preview frame [VERIFIED]
 Build the SAME graph with D reduced to `t + 0.5`, then output-side `-ss t -frames:v 1`, finish with
@@ -85,3 +87,7 @@ dozens of inputs for 30-40 minute videos. Prove: equal look to the baseline (lum
 4. `pad` after `crop` is required, otherwise scale < 1.0 leaves the wrong size.
 5. Source videos are shorter/longer than backgrounds: NEVER assume; the planner chains backgrounds until `total >= D - 0.02`.
 6. Concat of segments needs equal fps/size/sar: hence `fps=F`, `setsar=1`, and `pad` on every segment.
+7. Background cache key uses `DurationFull`. Encode the full clip, then trim to D at render time. Encoding only the first job's D poisons later longer jobs (`-shortest` cuts them).
+8. After `progress=end`, `+faststart` may still rewrite a large file on HDD. Only kill ffmpeg if the `.part` size is unchanged for 15s.
+9. Prefer writing `.part` on the SSD (`%LocalAppData%\VideoAutoTool\out-tmp`) then copy once to the HDD destination.
+10. Never `string.Replace` the job duration into the filter graph. `4`/`20`/`25`/`420` also appear in `yuv420p` and `fps=25`. Build the graph with the clip duration instead.

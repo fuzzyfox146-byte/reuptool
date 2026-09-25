@@ -105,26 +105,32 @@ public static class SessionStore
         JsonSerializer.Serialize(session, TemplateJsonContext.Options);
 
     /// <summary>
-    /// First launch of the GPU edition copies the original session so both apps start from the same setup.
-    /// Later saves stay in VideoAutoTool-Gpu and do not overwrite the 1.0.25 session.
+    /// First launch of a side-by-side edition copies an existing session.
+    /// Opt copies VideoAutoTool-Gpu (then the original). GPU copies the original.
+    /// Later saves stay in that edition folder and do not overwrite the others.
     /// </summary>
     private static void CopyLegacySessionOnce()
     {
-        if (!ProductEdition.IsGpuEdition || File.Exists(FilePath))
+        if (File.Exists(FilePath) || (!ProductEdition.IsGpuEdition && !ProductEdition.IsOptEdition))
         {
             return;
         }
 
-        var legacy = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "VideoAutoTool",
-            "session.json");
-        if (!File.Exists(legacy))
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var sources = ProductEdition.IsOptEdition
+            ? new[] { "VideoAutoTool-Gpu", "VideoAutoTool" }
+            : new[] { "VideoAutoTool" };
+        foreach (var folder in sources)
         {
+            var legacy = Path.Combine(appData, folder, "session.json");
+            if (!File.Exists(legacy))
+            {
+                continue;
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
+            File.Copy(legacy, FilePath);
             return;
         }
-
-        Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
-        File.Copy(legacy, FilePath);
     }
 }

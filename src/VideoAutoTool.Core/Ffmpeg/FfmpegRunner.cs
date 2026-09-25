@@ -11,12 +11,14 @@ public sealed class FfmpegRunner
         string? workingDirectory,
         CancellationToken cancellationToken,
         IProgress<double>? progress = null,
-        double? totalDurationSeconds = null) =>
+        double? totalDurationSeconds = null,
+        string? stallWatchPath = null) =>
         FfmpegProcessRunner.RunAsync(
             _paths.FfmpegPath,
             arguments,
             workingDirectory,
             cancellationToken,
             progress,
-            totalDurationSeconds);
+            totalDurationSeconds,
+            stallWatchPath);
 }

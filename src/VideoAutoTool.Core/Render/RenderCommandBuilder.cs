@@ -25,7 +25,7 @@ public static class RenderCommandBuilder
         {
             "-y", "-hide_banner", "-loglevel", "warning", "-nostdin"
         };
-        AddMediaInput(args, driverPath, hwAccel: null, loopImage: false, loopWave: false, fps: 0);
+        AddDriverInput(args, driverPath);
 
         foreach (var input in graph.ExtraInputs)
         {
@@ -35,17 +35,17 @@ public static class RenderCommandBuilder
                 args,
                 input,
                 isImage ? null : encode.HwAccel,
-                loopImage: isImage,
+                loopImage: false,
                 loopWave: input == job.WavePath,
                 fps: template.Canvas.Fps);
         }
 
         args.Add("-filter_complex");
-        args.Add(graph.FilterComplex.Replace(job.DurationSeconds.ToString("0.###"), duration.ToString("0.###")));
+        args.Add(WithPacedAudio(graph.FilterComplex, duration));
         args.Add("-map");
         args.Add(graph.VideoOutputLabel);
         args.Add("-map");
-        args.Add("0:a:0");
+        args.Add("[aout]");
         args.Add("-t");
         args.Add(duration.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
 
@@ -67,6 +67,7 @@ public static class RenderCommandBuilder
         args.Add("tv");
         args.Add("-movflags");
         args.Add("+faststart");
+        AppendMuxQueue(args);
         args.Add("-f");
         args.Add("mp4");
         args.Add("-progress");
@@ -87,15 +88,14 @@ public static class RenderCommandBuilder
     {
         var previewDuration = frameTime + 0.5;
         var filter = graph.FilterComplex
-            .Replace(job.DurationSeconds.ToString("0.###"), previewDuration.ToString("0.###"))
-            .Replace("format=yuv420p[vout]", "scale=800:-2:flags=bicubic,format=rgb24[vout]");
+            .Replace("format=yuv420p[vout]", "scale=800:-2:flags=bicubic,format=rgb24[vout]", StringComparison.Ordinal);
 
         var hw = encode?.HwAccel;
         var args = new List<string>
         {
             "-y", "-hide_banner", "-loglevel", "warning", "-nostdin"
         };
-        AddMediaInput(args, driverPath, hw, loopImage: false, loopWave: false, fps: 0);
+        AddDriverInput(args, driverPath);
 
         foreach (var input in graph.ExtraInputs)
         {
@@ -105,7 +105,7 @@ public static class RenderCommandBuilder
                 args,
                 input,
                 isImage ? null : hw,
-                loopImage: isImage,
+                loopImage: false,
                 loopWave: input == job.WavePath,
                 fps: template.Canvas.Fps);
         }
@@ -147,6 +147,29 @@ public static class RenderCommandBuilder
         }
     }
 
+    /// <summary>
+    /// FFmpeg 7 keeps only 128 packets / 50MB per stream. On a long video the audio
+    /// decoder fills that before the first encoded frame, then fails with
+    /// "No space left on device".
+    /// </summary>
+    /// <summary>
+    /// Keeps audio in the same filter graph as video. A separate audio decoder on a
+    /// long file fills ffmpeg 7's queue and fails with "No space left on device".
+    /// </summary>
+    public static string WithPacedAudio(string filter, double duration)
+    {
+        var seconds = duration.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+        return filter + $";[0:a]atrim=duration={seconds},asetpts=PTS-STARTPTS,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[aout]";
+    }
+
+    public static void AppendMuxQueue(List<string> args)
+    {
+        args.Add("-max_muxing_queue_size");
+        args.Add("200000");
+        args.Add("-muxing_queue_data_threshold");
+        args.Add("1073741824");
+    }
+
     public static void AppendOutputSize(List<string> args, CanvasSettings canvas)
     {
         args.Add("-r");
@@ -174,7 +197,7 @@ public static class RenderCommandBuilder
         {
             "-y", "-hide_banner", "-loglevel", "warning", "-nostdin"
         };
-        AddMediaInput(args, driverPath, hwAccel: null, loopImage: false, loopWave: false, fps: 0);
+        AddDriverInput(args, driverPath);
         if (!string.IsNullOrWhiteSpace(encode.HwAccel))
         {
             args.Add("-hwaccel");
@@ -202,18 +225,24 @@ public static class RenderCommandBuilder
                 args,
                 input,
                 decodeOnCpu ? null : encode.HwAccel,
-                loopImage: isImage,
+                loopImage: false,
                 loopWave: input == job.WavePath,
                 fps: template.Canvas.Fps,
                 keepFramesOnGpu: encode.KeepFramesOnGpu && !decodeOnCpu);
         }
 
         args.Add("-filter_complex");
-        args.Add(graph.FilterComplex);
+        args.Add(WithPacedAudio(graph.FilterComplex, duration));
         args.Add("-map");
         args.Add(graph.VideoOutputLabel);
         args.Add("-map");
-        args.Add("0:a:0");
+        args.Add("[aout]");
+        args.Add("-c:a");
+        args.Add("aac");
+        args.Add("-b:a");
+        args.Add($"{template.Output.AudioBitrateKbps}k");
+        args.Add("-ar");
+        args.Add("48000");
 
         AppendVideoEncoder(args, encode.Encoder, template.Output.Quality, encode.KeepFramesOnGpu);
         AppendOutputSize(args, template.Canvas);
@@ -221,6 +250,7 @@ public static class RenderCommandBuilder
         args.Add("-shortest");
         args.Add("-movflags");
         args.Add("+faststart");
+        AppendMuxQueue(args);
         args.Add("-t");
         args.Add(duration.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
         args.Add("-f");
@@ -231,6 +261,15 @@ public static class RenderCommandBuilder
         args.Add(Path.GetFullPath(outputPath));
 
         return args;
+    }
+
+    public static void AddDriverInput(List<string> args, string path)
+    {
+        args.Add("-vn");
+        args.Add("-sn");
+        args.Add("-dn");
+        args.Add("-i");
+        args.Add(Path.GetFullPath(path));
     }
 
     public static void AddMediaInput(

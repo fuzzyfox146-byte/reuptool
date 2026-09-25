@@ -11,7 +11,8 @@ internal static class FfmpegProcessRunner
         string? workingDirectory,
         CancellationToken cancellationToken,
         IProgress<double>? progress = null,
-        double? totalDurationSeconds = null)
+        double? totalDurationSeconds = null,
+        string? stallWatchPath = null)
     {
         var stdout = new StringBuilder();
         var stderrLines = new Queue<string>();
@@ -81,13 +82,32 @@ internal static class FfmpegProcessRunner
             var first = await Task.WhenAny(exitTask, progressEnded.Task).ConfigureAwait(false);
             if (first != exitTask)
             {
-                var grace = Task.Delay(TimeSpan.FromSeconds(15), cancellationToken);
-                var finished = await Task.WhenAny(exitTask, grace).ConfigureAwait(false);
-                if (finished != exitTask && !process.HasExited)
+                var lastSize = -1L;
+                var lastChange = DateTime.UtcNow;
+                while (!process.HasExited)
                 {
-                    KillProcessTree(process);
-                    await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
-                    forcedOk = true;
+                    var wait = Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+                    var finished = await Task.WhenAny(exitTask, wait).ConfigureAwait(false);
+                    if (finished == exitTask)
+                    {
+                        break;
+                    }
+
+                    var size = ProcessStallWatch.TryReadLength(stallWatchPath);
+                    if (size != lastSize)
+                    {
+                        lastSize = size;
+                        lastChange = DateTime.UtcNow;
+                        continue;
+                    }
+
+                    if (ProcessStallWatch.IsStalled(lastSize, lastChange, size, DateTime.UtcNow))
+                    {
+                        KillProcessTree(process);
+                        await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+                        forcedOk = true;
+                        break;
+                    }
                 }
             }
 

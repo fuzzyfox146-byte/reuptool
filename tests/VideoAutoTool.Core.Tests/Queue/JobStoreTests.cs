@@ -1,4 +1,6 @@
+using VideoAutoTool.Core.Planning;
 using VideoAutoTool.Core.Queue;
+using VideoAutoTool.Core.Templates;
 
 namespace VideoAutoTool.Core.Tests.Queue;
 
@@ -184,5 +186,83 @@ public sealed class JobStoreTests : IDisposable
 
         store.Clear();
         Assert.False(File.Exists(queuePath));
+    }
+
+    [Fact]
+    public void SaveSnapshot_RoundTripsPlansAndIntake()
+    {
+        var queuePath = Path.Combine(_tempDir, "queue-snap.json");
+        var store = new JobStore(queuePath);
+        var template = TemplateDefaults.CreateCo139();
+        var plan = new RenderJobPlan(
+            1,
+            @"D:\src\a.mp4",
+            "a",
+            @"D:\sub\a.srt",
+            12,
+            [new BackgroundSegment(@"D:\bg\clip.mp4", 20)],
+            @"D:\av\a.png",
+            @"D:\w\w.mp4",
+            "right",
+            template.StylePresets[0],
+            @"D:\out\a.mp4");
+
+        store.SaveSnapshot(new QueueSnapshot
+        {
+            Jobs =
+            [
+                new RenderJobItem
+                {
+                    Id = "job1",
+                    JobIndex = 1,
+                    DriverPath = plan.DriverPath,
+                    OutputPath = plan.OutputPath,
+                    DurationSeconds = 12,
+                    Status = JobStatus.Pending,
+                    IntakeId = "01",
+                    IntakeName = "KenhA",
+                    Promoted = true
+                }
+            ],
+            PlansByJobId = { ["job1"] = plan },
+            TemplateByIntake = { ["01"] = template },
+            IntakeOrder = ["01"],
+            IntakeSequence = 1,
+            BatchSize = 9,
+            LastBatchSize = 9
+        });
+
+        var loaded = store.LoadSnapshot();
+        Assert.Equal("job1", loaded.Jobs[0].Id);
+        Assert.Equal("01", loaded.Jobs[0].IntakeId);
+        Assert.True(loaded.PlansByJobId.ContainsKey("job1"));
+        Assert.Equal(20, loaded.PlansByJobId["job1"].Backgrounds[0].DurationFull);
+        Assert.True(loaded.TemplateByIntake.ContainsKey("01"));
+        Assert.Equal(9, loaded.BatchSize);
+        Assert.Equal(1, loaded.IntakeSequence);
+    }
+
+    [Fact]
+    public void LoadSnapshot_ReadsLegacyJobArray()
+    {
+        var queuePath = Path.Combine(_tempDir, "queue-legacy.json");
+        var store = new JobStore(queuePath);
+        store.Save(
+        [
+            new RenderJobItem
+            {
+                Id = "old",
+                JobIndex = 0,
+                DriverPath = @"D:\src\a.mp4",
+                OutputPath = @"D:\out\a.mp4",
+                DurationSeconds = 5,
+                Status = JobStatus.Pending
+            }
+        ]);
+
+        var loaded = store.LoadSnapshot();
+        Assert.Single(loaded.Jobs);
+        Assert.Equal("old", loaded.Jobs[0].Id);
+        Assert.Empty(loaded.PlansByJobId);
     }
 }

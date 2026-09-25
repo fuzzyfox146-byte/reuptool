@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using VideoAutoTool.App.Services;
 using VideoAutoTool.Core.Planning;
 using VideoAutoTool.Core.Queue;
 using VideoAutoTool.Core.Render;
@@ -17,6 +18,7 @@ public sealed partial class QueueViewModel : ObservableObject
     private readonly DispatcherTimer _elapsedTimer;
     private readonly Stopwatch _elapsed = new();
     private RenderQueue? _queue;
+    private JobStore? _store;
     private CancellationTokenSource? _cts;
     private DispatcherTimer? _syncTimer;
     private bool _loopRunning;
@@ -96,18 +98,11 @@ public sealed partial class QueueViewModel : ObservableObject
         int batchSize,
         CancellationToken cancellationToken = default)
     {
-        if (_queue is null)
-        {
-            var storePath = Path.Combine(Path.GetTempPath(), "vat-ui-queue.json");
-            var store = new JobStore(storePath);
-            store.Clear();
-            _queue = new RenderQueue(_adapter, store, template, plan);
-            _queue.ProgressChanged += OnProgressChanged;
-            _queue.JobStatusChanged += OnJobStatusChanged;
-        }
+        EnsureQueue(template, plan);
+        var queue = _queue ?? throw new InvalidOperationException("Queue was not created.");
 
         var clipSeconds = request.Mode == RenderMode.Clip ? request.ClipSeconds : null;
-        var id = _queue.EnqueueIntake(
+        var id = queue.EnqueueIntake(
             sourceName,
             template,
             plan,
@@ -235,8 +230,59 @@ public sealed partial class QueueViewModel : ObservableObject
 
     private bool CanCancel() => IsRunning;
 
+    public void RestorePersisted(int maxParallel = 2)
+    {
+        if (_queue is not null)
+        {
+            return;
+        }
+
+        _lastParallel = Math.Clamp(maxParallel, 1, 3);
+        var store = new JobStore(PersistentQueuePath);
+        var snapshot = store.LoadSnapshot();
+        if (snapshot.Jobs.Count == 0)
+        {
+            return;
+        }
+
+        var template = snapshot.TemplateByIntake.Values.FirstOrDefault() ?? new Template();
+        EnsureQueue(template, new PlanResult([], []));
+        SyncFromQueue();
+        var pending = snapshot.Jobs.Count(job => job.Status is JobStatus.Pending or JobStatus.Paused);
+        var done = snapshot.Jobs.Count(job => job.Status == JobStatus.Done);
+        Status = $"Đã khôi phục hàng đợi: {done} xong, {pending} chờ. Bấm Render tiếp để chạy phần còn lại.";
+        AppendLog(Status);
+        NotifyQueueCommands();
+        SelectedJob ??= Jobs.FirstOrDefault();
+    }
+
+    public void Persist()
+    {
+        _queue?.Persist();
+    }
+
+    private void EnsureQueue(Template template, PlanResult plan)
+    {
+        if (_queue is not null)
+        {
+            return;
+        }
+
+        _store ??= new JobStore(PersistentQueuePath);
+        _queue = new RenderQueue(_adapter, _store, template, plan);
+        _queue.ProgressChanged += OnProgressChanged;
+        _queue.JobStatusChanged += OnJobStatusChanged;
+        _queue.Notice += OnQueueNotice;
+    }
+
+    private static string PersistentQueuePath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        ProductEdition.DataFolder,
+        "queue.json");
+
     private bool CanRenderAgain =>
-        !IsRunning && _queue is not null && _queue.GetJobs().Any(job => job.Status is JobStatus.Cancelled or JobStatus.Failed);
+        !IsRunning && _queue is not null && _queue.GetJobs().Any(job =>
+            job.Status is JobStatus.Cancelled or JobStatus.Failed or JobStatus.Pending or JobStatus.Paused);
 
     private bool CanClearQueue =>
         !IsRunning && _queue is not null && _queue.GetJobs().Count > 0;
@@ -247,7 +293,10 @@ public sealed partial class QueueViewModel : ObservableObject
         if (_queue is null) return;
         var reset = _queue.ResetToContinue();
         SyncFromQueue();
-        Status = $"Render tiếp {reset} video đã hủy hoặc lỗi. Video đã xong giữ nguyên.";
+        var pending = _queue.GetJobs().Count(job => job.Status == JobStatus.Pending);
+        Status = reset > 0
+            ? $"Render tiếp {reset} video đã hủy hoặc lỗi. Video đã xong giữ nguyên."
+            : $"Render tiếp {pending} video đang chờ. Video đã xong giữ nguyên.";
         AppendLog(Status);
         NotifyQueueCommands();
         StartLoop(_lastParallel, CancellationToken.None);
@@ -341,6 +390,15 @@ public sealed partial class QueueViewModel : ObservableObject
                 if (job.Status != JobStatus.Running) continue;
                 Jobs.FirstOrDefault(j => j.JobId == job.Id)?.Apply(job);
             }
+        });
+    }
+
+    private void OnQueueNotice(object? sender, string message)
+    {
+        RunOnUi(() =>
+        {
+            Status = message;
+            AppendLog(message);
         });
     }
 

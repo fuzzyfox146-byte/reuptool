@@ -1,4 +1,4 @@
-using VideoAutoTool.Core.Ffmpeg;
+﻿using VideoAutoTool.Core.Ffmpeg;
 using VideoAutoTool.Core.Planning;
 using VideoAutoTool.Core.Render;
 using VideoAutoTool.Core.Templates;
@@ -59,9 +59,7 @@ public sealed class PreparedAssetService
             {
                 var tempPath = _store.GetTempPath(hash, ".mp4");
                 
-                var duration = segment == job.Backgrounds[^1]
-                    ? Math.Max(0.01, job.DurationSeconds - job.Backgrounds.Take(job.Backgrounds.Count - 1).Sum(s => s.DurationFull))
-                    : segment.DurationFull;
+                var duration = BackgroundCacheRules.EncodeDurationSeconds(segment);
 
                 var scaleExpr = bgLayer.ScaleMode == ScaleMode.Cover
                     ? $"w='trunc(max({canvas.Width}/iw,{canvas.Height}/ih)*iw*{bgLayer.Scale:0.###}/2)*2':h='trunc(max({canvas.Width}/iw,{canvas.Height}/ih)*ih*{bgLayer.Scale:0.###}/2)*2'"
@@ -81,6 +79,7 @@ public sealed class PreparedAssetService
                     "-y", "-hide_banner", "-loglevel", "warning", "-nostdin"
                 };
                 RenderCommandBuilder.AddMediaInput(args, segment.File, hwAccel, loopImage: false, loopWave: false, fps: 0);
+                args.Add("-an");
                 args.Add("-filter_complex");
                 args.Add(filter);
                 args.Add("-map");
@@ -196,18 +195,20 @@ public sealed class PreparedAssetService
 
     public async Task<string> PrepareWaveAsync(
         Template template,
-        string wavePath,
+        RenderJobPlan job,
         MediaInfo waveInfo,
         CancellationToken cancellationToken = default)
     {
         var canvas = template.Canvas;
-        var waveLayer = template.Layers.FirstOrDefault(l => l.Type == LayerType.LoopVideo);
+        var waveLayer = FilterGraphBuilder.FindWaveLayer(template);
         if (waveLayer is null)
         {
             throw new InvalidOperationException("No wave layer found");
         }
 
+        var wavePath = job.WavePath ?? waveInfo.Path;
         var fileInfo = new FileInfo(wavePath);
+        var rect = FilterGraphBuilder.ResolveWaveRect(template, job, waveLayer, waveInfo);
         var key = new CacheKey(
             wavePath,
             fileInfo.Length,
@@ -220,8 +221,11 @@ public sealed class PreparedAssetService
             "wave",
             new Dictionary<string, string>
             {
-                ["type"] = "wave",
-                ["target_width"] = (waveLayer.Transform?.Width ?? 500).ToString()
+                ["type"] = "wave-baked",
+                ["w"] = rect.Width.ToString(),
+                ["h"] = rect.Height.ToString(),
+                ["alpha"] = waveInfo.HasAlpha ? "1" : "0",
+                ["tolerance"] = waveLayer.BlackKeyTolerance.ToString("F3")
             });
 
         var hash = key.ComputeHash();
@@ -230,18 +234,18 @@ public sealed class PreparedAssetService
         if (!_store.Exists(hash, ".mov"))
         {
             var tempPath = _store.GetTempPath(hash, ".mov");
-            
-            var targetWidth = waveLayer.Transform?.Width ?? 500;
-            var aspectRatio = (double)(waveInfo.Width ?? targetWidth) / (waveInfo.Height ?? 100);
-            var targetHeight = (int)(targetWidth / aspectRatio);
-            targetWidth = (targetWidth / 2) * 2;
-            targetHeight = (targetHeight / 2) * 2;
+            var vf = $"fps={canvas.Fps},scale=w={rect.Width}:h={rect.Height}:flags=bicubic,format=rgba";
+            if (!waveInfo.HasAlpha)
+            {
+                vf += $",lumakey=threshold=0:tolerance={waveLayer.BlackKeyTolerance:0.###}:softness={waveLayer.BlackKeyTolerance:0.###}";
+            }
 
             var args = new List<string>
             {
                 "-y", "-hide_banner", "-loglevel", "warning", "-nostdin",
                 "-i", Path.GetFullPath(wavePath),
-                "-vf", $"scale=w={targetWidth}:h={targetHeight}:force_original_aspect_ratio=decrease",
+                "-an",
+                "-vf", vf,
                 "-c:v", "qtrle",
                 "-pix_fmt", "argb",
                 tempPath
@@ -265,4 +269,6 @@ public sealed class PreparedAssetService
 
         return cachedPath;
     }
+
 }
+

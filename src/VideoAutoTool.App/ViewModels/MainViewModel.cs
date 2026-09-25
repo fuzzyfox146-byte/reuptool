@@ -41,6 +41,7 @@ public partial class MainViewModel : ObservableObject
         SourceViewModel.GoToQueueRequested += (_, _) => SelectedTabIndex = 2;
 
         RestoreSession();
+        QueueViewModel.RestorePersisted(SettingsViewModel.ParallelCount);
         HookDirtyTracking();
         MarkSaved();
     }
@@ -95,6 +96,7 @@ public partial class MainViewModel : ObservableObject
     {
         try
         {
+            QueueViewModel.Persist();
             SessionStore.Save(BuildSession());
             MarkSaved();
             return true;

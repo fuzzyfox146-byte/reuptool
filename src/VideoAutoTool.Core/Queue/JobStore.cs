@@ -1,4 +1,6 @@
 using System.Text.Json;
+using VideoAutoTool.Core.Planning;
+using VideoAutoTool.Core.Templates;
 
 namespace VideoAutoTool.Core.Queue;
 
@@ -9,11 +11,6 @@ public sealed class JobStore
 {
     private readonly string _queueFilePath;
     private readonly object _lock = new();
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        WriteIndented = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-    };
 
     /// <summary>
     /// Creates a JobStore with the specified queue file path.
@@ -28,28 +25,44 @@ public sealed class JobStore
     /// Loads jobs from the queue file. Running jobs are reset to Pending.
     /// Returns empty list if file doesn't exist.
     /// </summary>
-    public List<RenderJobItem> Load()
+    public List<RenderJobItem> Load() => LoadSnapshot().Jobs;
+
+    /// <summary>
+    /// Loads the full snapshot (jobs + plans + intake templates). Missing file is empty.
+    /// A legacy file that is only a job array still loads the rows.
+    /// </summary>
+    public QueueSnapshot LoadSnapshot()
     {
         if (!File.Exists(_queueFilePath))
         {
-            return new List<RenderJobItem>();
+            return new QueueSnapshot();
         }
 
         try
         {
             var json = File.ReadAllText(_queueFilePath);
-            var jobs = JsonSerializer.Deserialize<List<RenderJobItem>>(json, JsonOptions)
-                ?? new List<RenderJobItem>();
-
-            // Reset Running/Paused jobs to Pending on load (crashed/interrupted).
-            foreach (var job in jobs.Where(j => j.Status is JobStatus.Running or JobStatus.Paused))
+            using var doc = JsonDocument.Parse(json);
+            QueueSnapshot snapshot;
+            if (doc.RootElement.ValueKind == JsonValueKind.Array)
             {
-                job.Status = JobStatus.Pending;
-                job.StartedAt = null;
-                job.Progress = 0.0;
+                snapshot = new QueueSnapshot
+                {
+                    Jobs = JsonSerializer.Deserialize<List<RenderJobItem>>(json, TemplateJsonContext.Options)
+                        ?? []
+                };
+            }
+            else
+            {
+                snapshot = JsonSerializer.Deserialize<QueueSnapshot>(json, TemplateJsonContext.Options)
+                    ?? new QueueSnapshot();
+                snapshot.Jobs ??= [];
+                snapshot.PlansByJobId ??= new Dictionary<string, RenderJobPlan>(StringComparer.Ordinal);
+                snapshot.TemplateByIntake ??= new Dictionary<string, Template>(StringComparer.Ordinal);
+                snapshot.IntakeOrder ??= [];
             }
 
-            return jobs;
+            ResetInterrupted(snapshot.Jobs);
+            return snapshot;
         }
         catch (Exception ex)
         {
@@ -63,31 +76,18 @@ public sealed class JobStore
     /// </summary>
     public void Save(IEnumerable<RenderJobItem> jobs)
     {
-        lock (_lock)
-        {
-            var directory = Path.GetDirectoryName(_queueFilePath);
-            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
-            {
-                Directory.CreateDirectory(directory);
-            }
+        WriteJson(JsonSerializer.Serialize(jobs, TemplateJsonContext.Options));
+    }
 
-            var tempPath = _queueFilePath + ".tmp";
-            try
-            {
-                var json = JsonSerializer.Serialize(jobs, JsonOptions);
-                File.WriteAllText(tempPath, json);
-                File.Move(tempPath, _queueFilePath, overwrite: true);
-            }
-            catch (Exception ex)
-            {
-                // Clean up temp file if it exists
-                if (File.Exists(tempPath))
-                {
-                    try { File.Delete(tempPath); } catch { /* best effort */ }
-                }
-                throw new InvalidOperationException($"Failed to save queue to {_queueFilePath}: {ex.Message}", ex);
-            }
-        }
+    public void SaveSnapshot(QueueSnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        snapshot.Jobs ??= [];
+        snapshot.PlansByJobId ??= new Dictionary<string, RenderJobPlan>(StringComparer.Ordinal);
+        snapshot.TemplateByIntake ??= new Dictionary<string, Template>(StringComparer.Ordinal);
+        snapshot.IntakeOrder ??= [];
+        snapshot.Version = snapshot.Version < 1 ? 1 : snapshot.Version;
+        WriteJson(JsonSerializer.Serialize(snapshot, TemplateJsonContext.Options));
     }
 
     /// <summary>
@@ -105,4 +105,42 @@ public sealed class JobStore
     /// Gets the path to the queue file.
     /// </summary>
     public string QueueFilePath => _queueFilePath;
+
+    private void WriteJson(string json)
+    {
+        lock (_lock)
+        {
+            var directory = Path.GetDirectoryName(_queueFilePath);
+            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            var tempPath = _queueFilePath + ".tmp";
+            try
+            {
+                File.WriteAllText(tempPath, json);
+                File.Move(tempPath, _queueFilePath, overwrite: true);
+            }
+            catch (Exception ex)
+            {
+                if (File.Exists(tempPath))
+                {
+                    try { File.Delete(tempPath); } catch { /* best effort */ }
+                }
+
+                throw new InvalidOperationException($"Failed to save queue to {_queueFilePath}: {ex.Message}", ex);
+            }
+        }
+    }
+
+    private static void ResetInterrupted(List<RenderJobItem> jobs)
+    {
+        foreach (var job in jobs.Where(j => j.Status is JobStatus.Running or JobStatus.Paused))
+        {
+            job.Status = JobStatus.Pending;
+            job.StartedAt = null;
+            job.Progress = 0.0;
+        }
+    }
 }

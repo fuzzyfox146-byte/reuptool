@@ -19,6 +19,13 @@
     <FileVersion>2.0.0.0</FileVersion>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(OptEdition)' == 'true'">
+    <DefineConstants>$(DefineConstants);VAT_OPT_EDITION</DefineConstants>
+    <Version>2.1.1</Version>
+    <AssemblyVersion>2.1.1.0</AssemblyVersion>
+    <FileVersion>2.1.1.0</FileVersion>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\VideoAutoTool.Core\VideoAutoTool.Core.csproj" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
