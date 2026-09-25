@@ -36,14 +36,12 @@ public static class YtDlpPlan
             "--no-mtime",
             "--format", VideoQuality.Format(request.Quality),
             "--merge-output-format", "mp4",
-            "--write-thumbnail",
-            "--convert-thumbnails", "jpg",
+            "--no-write-thumbnail",
             "--fragment-retries", "10",
             "--concurrent-fragments", "5",
             "--geo-bypass",
             "--match-filter", "!is_live",
             "-P", "home:" + Path.Combine(folder, "source"),
-            "-P", "thumbnail:" + Path.Combine(folder, "thum"),
             "-P", "temp:" + Path.Combine(folder, "temp")
         ]).ToList();
     }

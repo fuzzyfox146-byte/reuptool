@@ -27,9 +27,17 @@ public static class DownloadResume
             || ext.Equals(".m4v", StringComparison.OrdinalIgnoreCase);
     }
 
-    public static bool IsSubtitleFile(string fileName) =>
-        !fileName.EndsWith(".part", StringComparison.OrdinalIgnoreCase)
-        && Path.GetExtension(fileName).Equals(".srt", StringComparison.OrdinalIgnoreCase);
+    public static bool IsSubtitleFile(string fileName)
+    {
+        if (fileName.EndsWith(".part", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var ext = Path.GetExtension(fileName);
+        return ext.Equals(".srt", StringComparison.OrdinalIgnoreCase)
+            || ext.Equals(".json3", StringComparison.OrdinalIgnoreCase);
+    }
 
     public static IReadOnlyList<DownloadSlice> Missing(
         string folder,

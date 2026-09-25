@@ -48,6 +48,8 @@ public class DownloadTests
         Assert.Contains("de", subs);
         Assert.Contains("--newline", video);
         Assert.Contains(VideoQuality.Format("720"), video);
+        Assert.Contains("--no-write-thumbnail", video);
+        Assert.DoesNotContain("--write-thumbnail", video);
     }
 
     [Fact]
@@ -207,6 +209,8 @@ public class DownloadTests
             var only = Assert.Single(videos);
             Assert.Equal(new DownloadSlice(50, 50, 50), only);
             Assert.Equal(only, Assert.Single(subs));
+            File.WriteAllText(Path.Combine(text, "050 title.en.json3"), "{}");
+            Assert.Empty(DownloadResume.MissingSubtitles(text, request));
         }
         finally
         {

@@ -66,7 +66,8 @@ public sealed class SourceDownloader
             textSlices,
             slice => YtDlpPlan.Subtitles(tools, request, slice),
             textLog,
-            linked.Token);
+            linked.Token,
+            afterSlice: () => Json3ToSrt.ConvertFolder(textDir, log: null));
 
         YtDlpRunResult video;
         YtDlpRunResult subs;
@@ -125,7 +126,8 @@ public sealed class SourceDownloader
         IReadOnlyList<DownloadSlice> slices,
         Func<DownloadSlice, IReadOnlyList<string>> arguments,
         DownloadActivityLog activity,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action? afterSlice = null)
     {
         var exitCode = 0;
         foreach (var slice in slices)
@@ -140,7 +142,11 @@ public sealed class SourceDownloader
                 return result;
             }
 
-            if (result.ExitCode != 0)
+            if (result.ExitCode == 0)
+            {
+                afterSlice?.Invoke();
+            }
+            else
             {
                 exitCode = result.ExitCode;
             }

@@ -217,8 +217,8 @@ public partial class DownloadViewModel : ObservableObject
 
         var removed = DownloadArchive.Clear(row.ParentFolder.Trim());
         row.Status = removed.Count == 0
-            ? "Không có file lịch sử tải."
-            : "Đã xóa lịch sử tải. Lần sau sẽ tải lại từ đầu.";
+            ? "Không có file lịch sử riêng. Số tiếp theo theo file đang có trong source và text. Muốn từ 001: xóa file hai folder đó, giữ Từ = 1 và Số đặt tên = 1, rồi Tải tiếp."
+            : "Đã xóa file lịch sử cũ. Số tiếp theo vẫn theo file trong source và text.";
         ShowNotice(new DownloadNotice(null, row.ParentFolder + ": " + row.Status));
     }
 
