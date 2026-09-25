@@ -41,6 +41,7 @@ public static class YtDlpPlan
             "--fragment-retries", "10",
             "--concurrent-fragments", "5",
             "--geo-bypass",
+            "--match-filter", "!is_live",
             "-P", "home:" + Path.Combine(folder, "source"),
             "-P", "thumbnail:" + Path.Combine(folder, "thum"),
             "-P", "temp:" + Path.Combine(folder, "temp")
@@ -75,8 +76,7 @@ public static class YtDlpPlan
     private static IReadOnlyList<string> Common(DownloadTools tools, ChannelDownloadRequest request, DownloadSlice slice) =>
     [
         ChannelPlaylist.ToVideosUrl(request.ChannelUrl),
-        "--playlist-start", slice.PlaylistStart.ToString(),
-        "--playlist-end", slice.PlaylistEnd.ToString(),
+        "--playlist-items", PlaylistItems(slice),
         "--autonumber-start", slice.NameStart.ToString(),
         "--cookies", tools.CookiesPath,
         "--user-agent", UserAgent,
@@ -84,4 +84,9 @@ public static class YtDlpPlan
         "--retries", "10",
         "-o", OutputTemplate
     ];
+
+    private static string PlaylistItems(DownloadSlice slice) =>
+        slice.PlaylistStart == slice.PlaylistEnd
+            ? slice.PlaylistStart.ToString()
+            : slice.PlaylistStart + "-" + slice.PlaylistEnd;
 }

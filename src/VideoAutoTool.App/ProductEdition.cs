@@ -7,7 +7,7 @@ internal static class ProductEdition
 {
 #if VAT_OPT_EDITION
     public const string DataFolder = "VideoAutoTool-Opt";
-    public const string Title = "Video Auto Tool 2.1.1 Opt";
+    public const string Title = "Video Auto Tool 2.1.2 Opt";
     public const bool IsGpuEdition = false;
     public const bool IsOptEdition = true;
 #elif VAT_GPU_EDITION

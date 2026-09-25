@@ -65,6 +65,24 @@ public static class DownloadResume
         return slices;
     }
 
+    /// <summary>
+    /// One playlist item per slice so yt-dlp autonumber cannot skip ahead
+    /// when a middle video fails (cookie, private, unavailable).
+    /// </summary>
+    public static IReadOnlyList<DownloadSlice> OneItemEach(IEnumerable<DownloadSlice> slices)
+    {
+        var items = new List<DownloadSlice>();
+        foreach (var slice in slices)
+        {
+            for (var index = slice.PlaylistStart; index <= slice.PlaylistEnd; index++)
+            {
+                items.Add(new DownloadSlice(index, index, slice.NameStart + (index - slice.PlaylistStart)));
+            }
+        }
+
+        return items;
+    }
+
     private static HashSet<int> ExistingNumbers(string folder, Func<string, bool> isCompletedFile)
     {
         var numbers = new HashSet<int>();

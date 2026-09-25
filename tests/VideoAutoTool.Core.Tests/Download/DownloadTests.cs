@@ -37,10 +37,10 @@ public class DownloadTests
         var video = YtDlpPlan.Videos(tools, request);
         var subs = YtDlpPlan.Subtitles(tools, request);
 
-        Assert.Contains("--playlist-start", video);
-        Assert.Contains("3", video);
-        Assert.Contains("9", video);
+        Assert.Contains("--playlist-items", video);
+        Assert.Contains("3-9", video);
         Assert.Contains("--autonumber-start", video);
+        Assert.Contains("!is_live", video);
         Assert.Contains(YtDlpPlan.OutputTemplate, video);
         Assert.Contains("--no-overwrites", video);
         Assert.Contains("--no-overwrites", subs);
@@ -236,6 +236,14 @@ public class DownloadTests
             Assert.Equal(
                 [new DownloadSlice(11, 14, 2)],
                 DownloadResume.MissingSubtitles(text, request));
+            Assert.Equal(
+                [
+                    new DownloadSlice(11, 11, 2),
+                    new DownloadSlice(12, 12, 3),
+                    new DownloadSlice(13, 13, 4),
+                    new DownloadSlice(14, 14, 5)
+                ],
+                DownloadResume.OneItemEach(DownloadResume.MissingSubtitles(text, request)));
         }
         finally
         {
@@ -273,9 +281,9 @@ public class DownloadTests
                 CancellationToken.None);
 
             Assert.Equal(DownloadStop.Completed, result.Stop);
-            Assert.Contains(runner.Calls, args => args.Contains("--format") && After(args, "--playlist-start") == "2" && After(args, "--autonumber-start") == "2");
+            Assert.Contains(runner.Calls, args => args.Contains("--format") && After(args, "--playlist-items") == "2" && After(args, "--autonumber-start") == "2");
             Assert.DoesNotContain(runner.Calls, args => args.Contains("--sub-langs"));
-            Assert.DoesNotContain(runner.Calls, args => args.Contains("--format") && After(args, "--playlist-start") == "1");
+            Assert.DoesNotContain(runner.Calls, args => args.Contains("--format") && After(args, "--playlist-items") == "1");
         }
         finally
         {
@@ -284,7 +292,7 @@ public class DownloadTests
     }
 
     [Fact]
-    public async Task VideoError_StopsLaterVideos_ButNotSubtitles()
+    public async Task VideoError_ContinuesLaterVideos_AndStillDownloadsSubtitles()
     {
         var (root, tools) = NewTools();
         File.WriteAllText(Path.Combine(root, "source", "002 title.mp4"), "v");
@@ -298,12 +306,12 @@ public class DownloadTests
                     return Task.FromResult(new YtDlpRunResult(0, false, null));
                 }
 
-                if (args.Contains("--format") && After(args, "--playlist-start") == "3")
+                if (args.Contains("--format") && After(args, "--playlist-items") == "3")
                 {
                     third = true;
                 }
 
-                if (args.Contains("--format") && After(args, "--playlist-start") == "1")
+                if (args.Contains("--format") && After(args, "--playlist-items") == "1")
                 {
                     return Task.FromResult(new YtDlpRunResult(1, false, null));
                 }
@@ -322,7 +330,7 @@ public class DownloadTests
 
             Assert.Equal(DownloadStop.Failed, result.Stop);
             Assert.Contains("Video", result.Detail);
-            Assert.False(third);
+            Assert.True(third);
             Assert.Contains(runner.Calls, args => args.Contains("--sub-langs"));
         }
         finally
@@ -332,7 +340,7 @@ public class DownloadTests
     }
 
     [Fact]
-    public async Task SubtitleError_StopsLaterSubtitles_ButNotVideos()
+    public async Task SubtitleError_ContinuesLaterSubtitles_AndDoesNotRedownloadVideos()
     {
         var (root, tools) = NewTools();
         File.WriteAllText(Path.Combine(root, "source", "001 title.mp4"), "v");
@@ -349,12 +357,12 @@ public class DownloadTests
                     return Task.FromResult(new YtDlpRunResult(0, false, null));
                 }
 
-                if (args.Contains("--sub-langs") && After(args, "--playlist-start") == "3")
+                if (args.Contains("--sub-langs") && After(args, "--playlist-items") == "3")
                 {
                     third = true;
                 }
 
-                if (args.Contains("--sub-langs") && After(args, "--playlist-start") == "1")
+                if (args.Contains("--sub-langs") && After(args, "--playlist-items") == "1")
                 {
                     return Task.FromResult(new YtDlpRunResult(1, false, null));
                 }
@@ -373,7 +381,7 @@ public class DownloadTests
 
             Assert.Equal(DownloadStop.Failed, result.Stop);
             Assert.Contains("Phụ đề", result.Detail);
-            Assert.False(third);
+            Assert.True(third);
             Assert.DoesNotContain(runner.Calls, args => args.Contains("--format"));
         }
         finally
@@ -402,6 +410,17 @@ public class DownloadTests
         Assert.Equal("RV144  Video: 001 Title.mp4  1.50MiB/s", notices.Last(notice => notice.ReplaceKey == keys[0]).Text);
         Assert.Equal("RV144  Video: 002 Other.mp4", notices.Last(notice => notice.ReplaceKey == keys[1]).Text);
         Assert.DoesNotContain(notices, notice => notice.Text.Contains("ERROR", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ActivityLog_IgnoresThumbnailImages()
+    {
+        var notices = new List<DownloadNotice>();
+        var log = new DownloadActivityLog(new ListProgress(notices), "Video", @"D:\RV144");
+        log.OnLine(@"[download] Destination: D:\RV144\thum\001 ChannelLogo.jpg");
+        log.OnLine(@"[download] Destination: D:\RV144\source\001 Title.mp4");
+
+        Assert.Equal("RV144  Video: 001 Title.mp4", Assert.Single(notices).Text);
     }
 
     [Fact]

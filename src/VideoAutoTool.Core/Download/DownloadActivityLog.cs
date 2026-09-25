@@ -111,7 +111,7 @@ public sealed partial class DownloadActivityLog
         }
 
         path = match.Groups["path"].Value.Trim().Trim('"');
-        return path.Length > 0;
+        return path.Length > 0 && !IsImage(path);
     }
 
     private static string DisplayName(string path)
@@ -133,6 +133,15 @@ public sealed partial class DownloadActivityLog
     private static bool IsTemp(string file) =>
         file.EndsWith(".part", StringComparison.OrdinalIgnoreCase)
         || Fragment().IsMatch(file);
+
+    private static bool IsImage(string path)
+    {
+        var ext = Path.GetExtension(path);
+        return ext.Equals(".jpg", StringComparison.OrdinalIgnoreCase)
+            || ext.Equals(".jpeg", StringComparison.OrdinalIgnoreCase)
+            || ext.Equals(".png", StringComparison.OrdinalIgnoreCase)
+            || ext.Equals(".webp", StringComparison.OrdinalIgnoreCase);
+    }
 
     [GeneratedRegex(@"\x1B\[[0-9;]*[A-Za-z]")]
     private static partial Regex Ansi();

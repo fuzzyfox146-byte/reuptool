@@ -27,8 +27,8 @@ public sealed class SourceDownloader
         Directory.CreateDirectory(Path.Combine(folder, "temp"));
         Json3ToSrt.ConvertFolder(textDir, log: null);
 
-        var videoSlices = DownloadResume.MissingVideos(sourceDir, request);
-        var textSlices = DownloadResume.MissingSubtitles(textDir, request);
+        var videoSlices = DownloadResume.OneItemEach(DownloadResume.MissingVideos(sourceDir, request));
+        var textSlices = DownloadResume.OneItemEach(DownloadResume.MissingSubtitles(textDir, request));
         if (videoSlices.Count == 0 && textSlices.Count == 0)
         {
             var label = Path.GetFileName(folder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
@@ -142,7 +142,7 @@ public sealed class SourceDownloader
 
             if (result.ExitCode != 0)
             {
-                return result;
+                exitCode = result.ExitCode;
             }
         }
 
