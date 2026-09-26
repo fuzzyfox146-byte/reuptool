@@ -7,7 +7,6 @@ namespace VideoAutoTool.App.ViewModels;
 public partial class DownloadChannelRowViewModel : ObservableObject
 {
     private readonly Action<DownloadChannelRowViewModel> _browse;
-    private readonly Action<DownloadChannelRowViewModel> _clearArchive;
     private readonly Action<DownloadChannelRowViewModel> _remove;
     private readonly Action<DownloadChannelRowViewModel> _start;
     private readonly Action<DownloadChannelRowViewModel> _stop;
@@ -15,13 +14,11 @@ public partial class DownloadChannelRowViewModel : ObservableObject
 
     public DownloadChannelRowViewModel(
         Action<DownloadChannelRowViewModel> browse,
-        Action<DownloadChannelRowViewModel> clearArchive,
         Action<DownloadChannelRowViewModel> remove,
         Action<DownloadChannelRowViewModel> start,
         Action<DownloadChannelRowViewModel> stop)
     {
         _browse = browse;
-        _clearArchive = clearArchive;
         _remove = remove;
         _start = start;
         _stop = stop;
@@ -123,9 +120,6 @@ public partial class DownloadChannelRowViewModel : ObservableObject
     private void Browse() => _browse(this);
 
     [RelayCommand(CanExecute = nameof(CanEditRow))]
-    private void ClearArchive() => _clearArchive(this);
-
-    [RelayCommand(CanExecute = nameof(CanEditRow))]
     private void Remove() => _remove(this);
 
     [RelayCommand(CanExecute = nameof(CanEditRow))]
@@ -145,7 +139,6 @@ public partial class DownloadChannelRowViewModel : ObservableObject
         OnPropertyChanged(nameof(CanEdit));
         OnPropertyChanged(nameof(StartLabel));
         BrowseCommand.NotifyCanExecuteChanged();
-        ClearArchiveCommand.NotifyCanExecuteChanged();
         RemoveCommand.NotifyCanExecuteChanged();
         StartCommand.NotifyCanExecuteChanged();
         StopCommand.NotifyCanExecuteChanged();

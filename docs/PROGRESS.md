@@ -17,7 +17,7 @@
 - Không `string.Replace` thời lượng vào filter (trước đây duration `4` biến `yuv420p` thành `yuv320p`).
 - `dotnet test`: 147 passed. Smoke CLI 3s: `testdata/opt-smoke` ra đúng 3.000s.
 - Hàng đợi ghi `%AppData%\<edition>\queue.json` (job + plan + template nguồn). Mở lại khôi phục; job đang chạy lúc đóng về Chờ. Bấm **Render tiếp** để chạy phần còn. **Xóa hàng đợi** vẫn xóa file.
-- Tải nguồn: mỗi số = 1 mục playlist. Không ghi thumbnail/logo vào `source`. `.json3` tính là phụ đề đã có và được đổi sang `.srt` sau từng clip, nên Tải tiếp không tải lại. Nút Xóa lịch sử không còn file txt (app không ghi file đó); muốn từ 001 thì xóa file trong `source` và `text`.
+- Tải nguồn: không ghi file lịch sử, không còn nút Xóa lịch sử. Video tải tiếp từ số mp4 lớn nhất + 1 đến ô Đến. Phụ đề quét số còn thiếu; số nào không ra file thì nghỉ 8s rồi thử lại cùng số (tối đa 4 lần), giữa các số nghỉ 3s. `.json3` vẫn tính là đã có.
 
 ## Decisions
 - Không đổi layout / preset NVENC / màu bt709 / graph 480p `gbrp`.
@@ -25,10 +25,11 @@
 - Không so SSIM với file 75 phút của bản 2.0.0-gpu trong phiên này (cần một job ngắn do người dùng render hai bản).
 
 ## Open issues / risks
+- Tải phụ đề: lỗ SRT vẫn còn nếu 4 lần thử đều không ra file (clip không có sub, hoặc cookie chết). Lần Tải tiếp sẽ xin lại các số trống.
 - Lần đầu mỗi nền: cache encode cả clip (lâu hơn trước nếu nền dài hơn video). Các job sau dùng lại thì nhanh và đúng độ dài.
 - Cache + `.part` tạm cùng nằm trên C. Giữ ~40 GB trống.
 - SSIM ≥ 0.99 so với `publish-2.0.0-gpu` chưa đo.
 
 ## Next step
-- Chạy `publish-2.1.2-opt\VideoAutoTool.App.exe`. File 002/003 đã lệch từ lần tải cũ thì xóa cặp đó rồi **Tải tiếp** (không xóa cả folder).
+- Publish lại `publish-2.1.3-opt` sau khi có thử lại phụ đề. Tải tiếp: phụ đề lỗi thì thử lại cùng số, không nhảy cóc ngay.
 - Đừng mở đồng thời hai bản Opt rồi ghi cùng file xuất.

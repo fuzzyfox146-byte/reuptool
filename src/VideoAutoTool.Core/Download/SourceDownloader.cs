@@ -2,9 +2,31 @@ namespace VideoAutoTool.Core.Download;
 
 public sealed class SourceDownloader
 {
-    private readonly IYtDlpRunner _runner;
+    public static readonly TimeSpan DefaultSubtitleRetryDelay = TimeSpan.FromSeconds(8);
+    public static readonly TimeSpan DefaultSubtitleItemDelay = TimeSpan.FromSeconds(3);
+    public const int DefaultSubtitleAttempts = 4;
 
-    public SourceDownloader(IYtDlpRunner runner) => _runner = runner;
+    private readonly IYtDlpRunner _runner;
+    private readonly TimeSpan _subtitleRetryDelay;
+    private readonly TimeSpan _subtitleItemDelay;
+    private readonly int _subtitleAttempts;
+
+    public SourceDownloader(IYtDlpRunner runner)
+        : this(runner, DefaultSubtitleRetryDelay, DefaultSubtitleItemDelay, DefaultSubtitleAttempts)
+    {
+    }
+
+    public SourceDownloader(
+        IYtDlpRunner runner,
+        TimeSpan subtitleRetryDelay,
+        TimeSpan subtitleItemDelay,
+        int subtitleAttempts)
+    {
+        _runner = runner;
+        _subtitleRetryDelay = subtitleRetryDelay;
+        _subtitleItemDelay = subtitleItemDelay;
+        _subtitleAttempts = Math.Max(1, subtitleAttempts);
+    }
 
     public async Task<ChannelDownloadResult> DownloadAsync(
         DownloadTools tools,
@@ -61,13 +83,14 @@ public sealed class SourceDownloader
             slice => YtDlpPlan.Videos(tools, request, slice),
             videoLog,
             linked.Token);
-        var subsTask = RunSlicesAsync(
+        var subsTask = RunSubtitleSlicesAsync(
             tools,
+            request,
             textSlices,
-            slice => YtDlpPlan.Subtitles(tools, request, slice),
+            textDir,
             textLog,
-            linked.Token,
-            afterSlice: () => Json3ToSrt.ConvertFolder(textDir, log: null));
+            log,
+            linked.Token);
 
         YtDlpRunResult video;
         YtDlpRunResult subs;
@@ -126,8 +149,7 @@ public sealed class SourceDownloader
         IReadOnlyList<DownloadSlice> slices,
         Func<DownloadSlice, IReadOnlyList<string>> arguments,
         DownloadActivityLog activity,
-        CancellationToken cancellationToken,
-        Action? afterSlice = null)
+        CancellationToken cancellationToken)
     {
         var exitCode = 0;
         foreach (var slice in slices)
@@ -142,13 +164,72 @@ public sealed class SourceDownloader
                 return result;
             }
 
-            if (result.ExitCode == 0)
-            {
-                afterSlice?.Invoke();
-            }
-            else
+            if (result.ExitCode != 0)
             {
                 exitCode = result.ExitCode;
+            }
+        }
+
+        return new YtDlpRunResult(exitCode, false, null);
+    }
+
+    private async Task<YtDlpRunResult> RunSubtitleSlicesAsync(
+        DownloadTools tools,
+        ChannelDownloadRequest request,
+        IReadOnlyList<DownloadSlice> slices,
+        string textDir,
+        DownloadActivityLog activity,
+        IProgress<DownloadNotice>? log,
+        CancellationToken cancellationToken)
+    {
+        var exitCode = 0;
+        for (var i = 0; i < slices.Count; i++)
+        {
+            var slice = slices[i];
+            var have = false;
+            for (var attempt = 1; attempt <= _subtitleAttempts; attempt++)
+            {
+                var result = await _runner.RunAsync(
+                    tools.YtDlpPath,
+                    YtDlpPlan.Subtitles(tools, request, slice),
+                    new Progress<string>(activity.OnLine),
+                    cancellationToken).ConfigureAwait(false);
+                if (result.CookieDead)
+                {
+                    return result;
+                }
+
+                Json3ToSrt.ConvertFolder(textDir, log: null);
+                if (DownloadResume.HasCompleted(textDir, slice.NameStart, DownloadResume.IsSubtitleFile))
+                {
+                    have = true;
+                    break;
+                }
+
+                if (attempt < _subtitleAttempts)
+                {
+                    var label = Path.GetFileName(
+                        request.ParentFolder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                    var wait = _subtitleRetryDelay > TimeSpan.Zero
+                        ? $" sau {_subtitleRetryDelay.TotalSeconds:0}s"
+                        : "";
+                    log?.Report(new DownloadNotice(
+                        null,
+                        $"{label}  Phụ đề {slice.NameStart:000}: chưa có file, thử lại lần {attempt + 1}/{_subtitleAttempts}{wait}."));
+                    if (_subtitleRetryDelay > TimeSpan.Zero)
+                    {
+                        await Task.Delay(_subtitleRetryDelay, cancellationToken).ConfigureAwait(false);
+                    }
+                }
+            }
+
+            if (!have)
+            {
+                exitCode = 1;
+            }
+            else if (i < slices.Count - 1 && _subtitleItemDelay > TimeSpan.Zero)
+            {
+                await Task.Delay(_subtitleItemDelay, cancellationToken).ConfigureAwait(false);
             }
         }
 

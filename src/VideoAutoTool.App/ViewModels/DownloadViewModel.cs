@@ -193,7 +193,7 @@ public partial class DownloadViewModel : ObservableObject
 
     private DownloadChannelRowViewModel CreateRow()
     {
-        var row = new DownloadChannelRowViewModel(BrowseFolder, ClearArchive, RemoveRow, StartRow, StopRow);
+        var row = new DownloadChannelRowViewModel(BrowseFolder, RemoveRow, StartRow, StopRow);
         row.PropertyChanged += (_, _) => NotifyWorkspace();
         return row;
     }
@@ -205,21 +205,6 @@ public partial class DownloadViewModel : ObservableObject
         {
             row.ParentFolder = path;
         }
-    }
-
-    private void ClearArchive(DownloadChannelRowViewModel row)
-    {
-        if (string.IsNullOrWhiteSpace(row.ParentFolder))
-        {
-            row.Status = "Chưa chọn folder.";
-            return;
-        }
-
-        var removed = DownloadArchive.Clear(row.ParentFolder.Trim());
-        row.Status = removed.Count == 0
-            ? "Không có file lịch sử riêng. Số tiếp theo theo file đang có trong source và text. Muốn từ 001: xóa file hai folder đó, giữ Từ = 1 và Số đặt tên = 1, rồi Tải tiếp."
-            : "Đã xóa file lịch sử cũ. Số tiếp theo vẫn theo file trong source và text.";
-        ShowNotice(new DownloadNotice(null, row.ParentFolder + ": " + row.Status));
     }
 
     private void RemoveRow(DownloadChannelRowViewModel row)

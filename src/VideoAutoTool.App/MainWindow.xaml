@@ -458,7 +458,6 @@
                                 <ColumnDefinition Width="180"/>
                                 <ColumnDefinition Width="76"/>
                                 <ColumnDefinition Width="64"/>
-                                <ColumnDefinition Width="88"/>
                                 <ColumnDefinition Width="48"/>
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="Folder cha"/>
@@ -485,7 +484,6 @@
                                                 <ColumnDefinition Width="180"/>
                                                 <ColumnDefinition Width="76"/>
                                                 <ColumnDefinition Width="64"/>
-                                                <ColumnDefinition Width="88"/>
                                                 <ColumnDefinition Width="48"/>
                                             </Grid.ColumnDefinitions>
                                             <TextBox Grid.Column="0" Margin="0,0,4,0" IsEnabled="{Binding CanEdit}"
@@ -511,10 +509,7 @@
                                                     Command="{Binding StartCommand}"/>
                                             <Button Grid.Column="9" Content="Dừng" Margin="0,0,4,0"
                                                     Command="{Binding StopCommand}"/>
-                                            <Button Grid.Column="10" Content="Xóa lịch sử" Margin="0,0,4,0"
-                                                    ToolTip="App không còn ghi file lịch sử. Muốn tải lại từ 001 thì xóa file trong source và text, giữ Từ = 1 và Số đặt tên = 1."
-                                                    Command="{Binding ClearArchiveCommand}"/>
-                                            <Button Grid.Column="11" Content="Xóa"
+                                            <Button Grid.Column="10" Content="Xóa"
                                                     Command="{Binding RemoveCommand}"/>
                                         </Grid>
                                     </DataTemplate>

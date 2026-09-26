@@ -3,15 +3,16 @@ namespace VideoAutoTool.Core.Download;
 public sealed record DownloadSlice(int PlaylistStart, int PlaylistEnd, int NameStart);
 
 /// <summary>
-/// Skips numbers that already have a finished file so a later run keeps the same 001, 002 names.
+/// Videos continue after the highest finished number. Subtitles fill every missing number
+/// up to the entered end. No archive file is read or written.
 /// </summary>
 public static class DownloadResume
 {
     public static IReadOnlyList<DownloadSlice> MissingVideos(string sourceFolder, ChannelDownloadRequest request) =>
-        Missing(sourceFolder, request, IsVideoFile);
+        AfterHighest(sourceFolder, request, IsVideoFile);
 
     public static IReadOnlyList<DownloadSlice> MissingSubtitles(string textFolder, ChannelDownloadRequest request) =>
-        Missing(textFolder, request, IsSubtitleFile);
+        MissingNumbers(textFolder, request, IsSubtitleFile);
 
     public static bool IsVideoFile(string fileName)
     {
@@ -39,7 +40,33 @@ public static class DownloadResume
             || ext.Equals(".json3", StringComparison.OrdinalIgnoreCase);
     }
 
-    public static IReadOnlyList<DownloadSlice> Missing(
+    public static IReadOnlyList<DownloadSlice> AfterHighest(
+        string folder,
+        ChannelDownloadRequest request,
+        Func<string, bool> isCompletedFile)
+    {
+        var have = ExistingNumbers(folder, isCompletedFile);
+        var endNumber = request.NameStart + (request.PlaylistEnd - request.PlaylistStart);
+        var highest = request.NameStart - 1;
+        foreach (var number in have)
+        {
+            if (number >= request.NameStart && number <= endNumber && number > highest)
+            {
+                highest = number;
+            }
+        }
+
+        var nextNumber = highest + 1;
+        if (nextNumber > endNumber)
+        {
+            return [];
+        }
+
+        var playlistStart = request.PlaylistStart + (nextNumber - request.NameStart);
+        return [new DownloadSlice(playlistStart, request.PlaylistEnd, nextNumber)];
+    }
+
+    public static IReadOnlyList<DownloadSlice> MissingNumbers(
         string folder,
         ChannelDownloadRequest request,
         Func<string, bool> isCompletedFile)
@@ -90,6 +117,9 @@ public static class DownloadResume
 
         return items;
     }
+
+    public static bool HasCompleted(string folder, int number, Func<string, bool> isCompletedFile) =>
+        ExistingNumbers(folder, isCompletedFile).Contains(number);
 
     private static HashSet<int> ExistingNumbers(string folder, Func<string, bool> isCompletedFile)
     {

@@ -120,7 +120,7 @@ public class DownloadTests
                 return Task.FromResult(new YtDlpRunResult(0, false, null));
             }
         };
-        var multi = new MultiChannelDownloader(new SourceDownloader(runner));
+        var multi = new MultiChannelDownloader(FastDownloader(runner));
         var channels = new[]
         {
             new ChannelDownloadRequest(Path.Combine(root, "a"), "https://www.youtube.com/@channel-a", 1, 2, 1, "en", "144"),
@@ -163,7 +163,7 @@ public class DownloadTests
                 return Task.FromResult(new YtDlpRunResult(0, false, null));
             }
         };
-        var multi = new MultiChannelDownloader(new SourceDownloader(runner));
+        var multi = new MultiChannelDownloader(FastDownloader(runner));
         var channels = new[]
         {
             new ChannelDownloadRequest(Path.Combine(root, "bad"), "https://www.youtube.com/@bad", 1, 1, 1, "en", "144"),
@@ -219,7 +219,7 @@ public class DownloadTests
     }
 
     [Fact]
-    public void MissingFiles_FillsGapsAndSkipsEachSideSeparately()
+    public void MissingFiles_ContinuesAfterHighestNumberAndLeavesHoles()
     {
         var folder = Path.Combine(Path.GetTempPath(), "vat-resume-" + Guid.NewGuid().ToString("N"));
         var source = Path.Combine(folder, "source");
@@ -228,26 +228,27 @@ public class DownloadTests
         Directory.CreateDirectory(text);
         try
         {
-            foreach (var number in new[] { 1, 2, 3, 5 })
+            foreach (var number in new[] { 1, 2, 5 })
             {
                 File.WriteAllText(Path.Combine(source, $"{number:000} title.mp4"), "v");
             }
 
             File.WriteAllText(Path.Combine(text, "001 title.en.srt"), "s");
-            var request = new ChannelDownloadRequest(folder, "https://www.youtube.com/@Chosen", 10, 14, 1, "en", "144");
+            File.WriteAllText(Path.Combine(text, "005 title.en.srt"), "s");
+            File.WriteAllText(Path.Combine(source, "999 stray.mp4"), "v");
+            var request = new ChannelDownloadRequest(folder, "https://www.youtube.com/@Chosen", 1, 10, 1, "en", "144");
 
-            Assert.Equal([new DownloadSlice(13, 13, 4)], DownloadResume.MissingVideos(source, request));
+            Assert.Equal([new DownloadSlice(6, 10, 6)], DownloadResume.MissingVideos(source, request));
             Assert.Equal(
-                [new DownloadSlice(11, 14, 2)],
+                [new DownloadSlice(2, 4, 2), new DownloadSlice(6, 10, 6)],
                 DownloadResume.MissingSubtitles(text, request));
             Assert.Equal(
                 [
-                    new DownloadSlice(11, 11, 2),
-                    new DownloadSlice(12, 12, 3),
-                    new DownloadSlice(13, 13, 4),
-                    new DownloadSlice(14, 14, 5)
+                    new DownloadSlice(2, 2, 2),
+                    new DownloadSlice(3, 3, 3),
+                    new DownloadSlice(4, 4, 4)
                 ],
-                DownloadResume.OneItemEach(DownloadResume.MissingSubtitles(text, request)));
+                DownloadResume.OneItemEach(DownloadResume.MissingSubtitles(text, request)).Take(3));
         }
         finally
         {
@@ -278,7 +279,7 @@ public class DownloadTests
 
         try
         {
-            var result = await new SourceDownloader(runner).DownloadAsync(
+            var result = await FastDownloader(runner).DownloadAsync(
                 tools,
                 new ChannelDownloadRequest(root, "https://www.youtube.com/@Chosen", 1, 2, 1, "en", "144"),
                 log: null,
@@ -299,7 +300,6 @@ public class DownloadTests
     public async Task VideoError_ContinuesLaterVideos_AndStillDownloadsSubtitles()
     {
         var (root, tools) = NewTools();
-        File.WriteAllText(Path.Combine(root, "source", "002 title.mp4"), "v");
         var third = false;
         var runner = new ScriptedYtDlp
         {
@@ -326,7 +326,7 @@ public class DownloadTests
 
         try
         {
-            var result = await new SourceDownloader(runner).DownloadAsync(
+            var result = await FastDownloader(runner).DownloadAsync(
                 tools,
                 new ChannelDownloadRequest(root, "https://www.youtube.com/@Chosen", 1, 3, 1, "en", "144"),
                 log: null,
@@ -350,7 +350,7 @@ public class DownloadTests
         File.WriteAllText(Path.Combine(root, "source", "001 title.mp4"), "v");
         File.WriteAllText(Path.Combine(root, "source", "002 title.mp4"), "v");
         File.WriteAllText(Path.Combine(root, "source", "003 title.mp4"), "v");
-        File.WriteAllText(Path.Combine(root, "text", "002 title.en.srt"), "s");
+        File.WriteAllText(Path.Combine(root, "text", "001 title.en.srt"), "s");
         var third = false;
         var runner = new ScriptedYtDlp
         {
@@ -366,7 +366,7 @@ public class DownloadTests
                     third = true;
                 }
 
-                if (args.Contains("--sub-langs") && After(args, "--playlist-items") == "1")
+                if (args.Contains("--sub-langs") && After(args, "--playlist-items") == "2")
                 {
                     return Task.FromResult(new YtDlpRunResult(1, false, null));
                 }
@@ -377,7 +377,7 @@ public class DownloadTests
 
         try
         {
-            var result = await new SourceDownloader(runner).DownloadAsync(
+            var result = await FastDownloader(runner).DownloadAsync(
                 tools,
                 new ChannelDownloadRequest(root, "https://www.youtube.com/@Chosen", 1, 3, 1, "en", "144"),
                 log: null,
@@ -387,6 +387,56 @@ public class DownloadTests
             Assert.Contains("Phụ đề", result.Detail);
             Assert.True(third);
             Assert.DoesNotContain(runner.Calls, args => args.Contains("--format"));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task SubtitleMissingFile_RetriesSameNumberUntilWritten()
+    {
+        var (root, tools) = NewTools();
+        var tries = 0;
+        var runner = new ScriptedYtDlp
+        {
+            Handler = (args, _) =>
+            {
+                if (args.Contains("--print"))
+                {
+                    return Task.FromResult(new YtDlpRunResult(0, false, null));
+                }
+
+                if (!args.Contains("--sub-langs") || After(args, "--playlist-items") != "2")
+                {
+                    return Task.FromResult(new YtDlpRunResult(0, false, null));
+                }
+
+                tries++;
+                if (tries >= 3)
+                {
+                    File.WriteAllText(Path.Combine(root, "text", "002 title.en.srt"), "s");
+                }
+
+                return Task.FromResult(new YtDlpRunResult(tries < 3 ? 1 : 0, false, null));
+            }
+        };
+
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "source", "001 title.mp4"), "v");
+            File.WriteAllText(Path.Combine(root, "source", "002 title.mp4"), "v");
+            File.WriteAllText(Path.Combine(root, "text", "001 title.en.srt"), "s");
+            var result = await new SourceDownloader(runner, TimeSpan.Zero, TimeSpan.Zero, 4).DownloadAsync(
+                tools,
+                new ChannelDownloadRequest(root, "https://www.youtube.com/@Chosen", 1, 2, 1, "en", "144"),
+                log: null,
+                CancellationToken.None);
+
+            Assert.Equal(DownloadStop.Completed, result.Stop);
+            Assert.Equal(3, tries);
+            Assert.True(File.Exists(Path.Combine(root, "text", "002 title.en.srt")));
         }
         finally
         {
@@ -478,7 +528,7 @@ public class DownloadTests
 
         try
         {
-            var result = await new SourceDownloader(runner).DownloadAsync(
+            var result = await FastDownloader(runner).DownloadAsync(
                 tools,
                 new ChannelDownloadRequest(root, "https://www.youtube.com/@together", 1, 2, 1, "en", "360"),
                 log: null,
@@ -492,6 +542,9 @@ public class DownloadTests
             Directory.Delete(root, recursive: true);
         }
     }
+
+    private static SourceDownloader FastDownloader(IYtDlpRunner runner) =>
+        new(new WriteSubtitleStub(runner), TimeSpan.Zero, TimeSpan.Zero, 1);
 
     private static (string Root, DownloadTools Tools) NewTools()
     {
@@ -521,6 +574,48 @@ public class DownloadTests
     private sealed class ListProgress(List<DownloadNotice> notices) : IProgress<DownloadNotice>
     {
         public void Report(DownloadNotice value) => notices.Add(value);
+    }
+
+    private sealed class WriteSubtitleStub(IYtDlpRunner inner) : IYtDlpRunner
+    {
+        public Task<YtDlpRunResult> RunAsync(
+            string executable,
+            IReadOnlyList<string> arguments,
+            IProgress<string>? log,
+            CancellationToken cancellationToken) =>
+            WriteAfterAsync(inner, executable, arguments, log, cancellationToken);
+
+        private static async Task<YtDlpRunResult> WriteAfterAsync(
+            IYtDlpRunner inner,
+            string executable,
+            IReadOnlyList<string> arguments,
+            IProgress<string>? log,
+            CancellationToken cancellationToken)
+        {
+            var result = await inner.RunAsync(executable, arguments, log, cancellationToken);
+            if (result.ExitCode != 0 || !arguments.Contains("--sub-langs"))
+            {
+                return result;
+            }
+
+            var folder = arguments.Select(Prefix("subtitle:")).FirstOrDefault(path => path.Length > 0) ?? "";
+            var numberText = After(arguments, "--autonumber-start");
+            if (folder.Length == 0 || !int.TryParse(numberText, out var number))
+            {
+                return result;
+            }
+
+            Directory.CreateDirectory(folder);
+            if (!DownloadResume.HasCompleted(folder, number, DownloadResume.IsSubtitleFile))
+            {
+                File.WriteAllText(Path.Combine(folder, $"{number:000} title.en.srt"), "s");
+            }
+
+            return result;
+        }
+
+        private static Func<string, string> Prefix(string prefix) =>
+            value => value.StartsWith(prefix, StringComparison.Ordinal) ? value[prefix.Length..] : "";
     }
 
     private sealed class ScriptedYtDlp : IYtDlpRunner
