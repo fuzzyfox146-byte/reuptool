@@ -81,6 +81,18 @@ public class ValidationRulesTests
     }
 
     [Fact]
+    public void CountSubtitlePairs_CountsOnlyNumberMatchedTitles()
+    {
+        var root = CreateValidationRoot(includeSubForVideo1: true, includeSubForVideo2: false);
+        WriteSrt(root, "002 Chosen One, God Says.en.srt");
+        var pairs = ValidationRules.CountSubtitlePairs(TemplateDefaults.CreateCo139(), root);
+        Assert.Equal(2, pairs.Drivers);
+        Assert.Equal(1, pairs.Valid);
+        Assert.Equal(1, pairs.Skipped);
+        Assert.Contains(pairs.Issues, i => i.Code == "E035");
+    }
+
+    [Fact]
     public void CheckSubtitleNames_ReportsSameNumberTitleMismatch()
     {
         var root = CreateValidationRoot(includeSubForVideo1: true, includeSubForVideo2: false);

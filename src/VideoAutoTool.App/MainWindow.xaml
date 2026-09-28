@@ -220,7 +220,10 @@
                                     ToolTip="Đưa đúng số video ở ô bên cạnh vào hàng đợi. Nguồn khác vẫn render tiếp."/>
                             <Button Content="Render hết"
                                     Command="{Binding SourceViewModel.RenderAllCommand}"
-                                    ToolTip="Đưa mọi video của nguồn này vào hàng đợi."/>
+                                    ToolTip="Chỉ đưa vào hàng đợi khi mọi video đều có SRT khớp số. Còn video lệch thì không thêm."/>
+                            <Button Content="Render video hợp lệ" Margin="8,0,0,0"
+                                    Command="{Binding SourceViewModel.RenderValidCommand}"
+                                    ToolTip="Đưa các video đã khớp SRT vào hàng đợi, bỏ qua video lệch."/>
                         </StackPanel>
                         <TextBlock Text="{Binding SourceViewModel.Status}" Foreground="{StaticResource TextSecondaryBrush}" Margin="0,0,0,12"/>
                     </StackPanel>
@@ -282,9 +285,12 @@
                             <Button Content="Render tiếp" Margin="0,0,8,0"
                                     Command="{Binding QueueViewModel.RenderAgainCommand}"
                                     ToolTip="Đưa video đã hủy và video lỗi về chờ, rồi chạy lại. Video đã xong giữ nguyên."/>
-                            <Button Content="Xóa hàng đợi"
+                            <Button Content="Xóa hàng đợi" Margin="0,0,8,0"
                                     Command="{Binding QueueViewModel.ClearQueueCommand}"
                                     ToolTip="Xóa hết job trên màn hình để thêm nguồn mới."/>
+                            <Button Content="Render video hợp lệ"
+                                    Command="{Binding SourceViewModel.RenderValidCommand}"
+                                    ToolTip="Đưa các video còn lại đã khớp SRT vào hàng đợi, bỏ qua video lệch."/>
                         </StackPanel>
                         <TextBlock Grid.Column="1" VerticalAlignment="Center" Margin="16,0"
                                    Text="{Binding QueueViewModel.ElapsedText, StringFormat='Thời gian encode: {0}'}"/>
@@ -504,6 +510,7 @@
                                                 <TextBlock Text="{Binding Status}" FontWeight="Bold"/>
                                                 <TextBlock Text="{Binding VideoProgress}"/>
                                                 <TextBlock Text="{Binding TextProgress}"/>
+                                                <TextBlock Text="{Binding ThumbProgress}"/>
                                             </StackPanel>
                                             <Button Grid.Column="8" Content="{Binding StartLabel}" Margin="0,0,4,0"
                                                     Command="{Binding StartCommand}"/>

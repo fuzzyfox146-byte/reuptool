@@ -48,8 +48,10 @@ public class DownloadTests
         Assert.Contains("de", subs);
         Assert.Contains("--newline", video);
         Assert.Contains(VideoQuality.Format("720"), video);
-        Assert.Contains("--no-write-thumbnail", video);
-        Assert.DoesNotContain("--write-thumbnail", video);
+        Assert.Contains("--write-thumbnail", video);
+        Assert.Contains("jpg", video);
+        Assert.Contains(video, arg => arg.StartsWith("thumbnail:", StringComparison.Ordinal));
+        Assert.DoesNotContain("--no-write-thumbnail", video);
     }
 
     [Fact]
@@ -204,13 +206,13 @@ public class DownloadTests
             var request = new ChannelDownloadRequest(folder, "https://www.youtube.com/@Chosen", 1, 50, 1, "en", "144");
 
             var videos = DownloadResume.MissingVideos(source, request);
-            var subs = DownloadResume.MissingSubtitles(text, request);
+            var subs = DownloadResume.MissingSubtitles(text, source, request);
 
             var only = Assert.Single(videos);
             Assert.Equal(new DownloadSlice(50, 50, 50), only);
             Assert.Equal(only, Assert.Single(subs));
             File.WriteAllText(Path.Combine(text, "050 title.en.json3"), "{}");
-            Assert.Empty(DownloadResume.MissingSubtitles(text, request));
+            Assert.Empty(DownloadResume.MissingSubtitles(text, source, request));
         }
         finally
         {
@@ -235,25 +237,109 @@ public class DownloadTests
 
             File.WriteAllText(Path.Combine(text, "001 title.en.srt"), "s");
             File.WriteAllText(Path.Combine(text, "005 title.en.srt"), "s");
+            Directory.CreateDirectory(Path.Combine(folder, "thum"));
+            File.WriteAllText(Path.Combine(folder, "thum", "001 title.jpg"), "t");
+            File.WriteAllText(Path.Combine(folder, "thum", "005 title.jpg"), "t");
             File.WriteAllText(Path.Combine(source, "999 stray.mp4"), "v");
             var request = new ChannelDownloadRequest(folder, "https://www.youtube.com/@Chosen", 1, 10, 1, "en", "144");
 
             Assert.Equal([new DownloadSlice(6, 10, 6)], DownloadResume.MissingVideos(source, request));
             Assert.Equal(
-                [new DownloadSlice(2, 4, 2), new DownloadSlice(6, 10, 6)],
-                DownloadResume.MissingSubtitles(text, request));
+                [new DownloadSlice(2, 2, 2), new DownloadSlice(6, 10, 6)],
+                DownloadResume.MissingSubtitles(text, source, request));
+            Assert.Equal(
+                [new DownloadSlice(2, 2, 2), new DownloadSlice(6, 10, 6)],
+                DownloadResume.MissingThumbnails(Path.Combine(folder, "thum"), source, request));
             Assert.Equal(
                 [
                     new DownloadSlice(2, 2, 2),
-                    new DownloadSlice(3, 3, 3),
-                    new DownloadSlice(4, 4, 4)
+                    new DownloadSlice(6, 6, 6),
+                    new DownloadSlice(7, 7, 7)
                 ],
-                DownloadResume.OneItemEach(DownloadResume.MissingSubtitles(text, request)).Take(3));
+                DownloadResume.OneItemEach(DownloadResume.MissingSubtitles(text, source, request)).Take(3));
         }
         finally
         {
             Directory.Delete(folder, recursive: true);
         }
+    }
+
+    [Fact]
+    public void MismatchedSideFile_IsMissingAndDeleted()
+    {
+        var folder = Path.Combine(Path.GetTempPath(), "vat-pair-" + Guid.NewGuid().ToString("N"));
+        var source = Path.Combine(folder, "source");
+        var text = Path.Combine(folder, "text");
+        var thum = Path.Combine(folder, "thum");
+        Directory.CreateDirectory(source);
+        Directory.CreateDirectory(text);
+        Directory.CreateDirectory(thum);
+        try
+        {
+            File.WriteAllText(Path.Combine(source, "001 Why Didnt You Tell Anyone.mp4"), "v");
+            File.WriteAllText(Path.Combine(text, "001 Other Title.en.srt"), "s");
+            File.WriteAllText(Path.Combine(thum, "001 Newest Upload.jpg"), "t");
+            var request = new ChannelDownloadRequest(folder, "https://www.youtube.com/@Chosen", 1, 1, 1, "en", "144");
+
+            Assert.Equal(
+                [new DownloadSlice(1, 1, 1)],
+                DownloadResume.MissingSubtitles(text, source, request));
+            Assert.Equal(
+                [new DownloadSlice(1, 1, 1)],
+                DownloadResume.MissingThumbnails(thum, source, request));
+            Assert.Equal(1, DownloadResume.RemoveMismatched(text, source, request, DownloadResume.IsSubtitleFile));
+            Assert.Equal(1, DownloadResume.RemoveMismatched(thum, source, request, DownloadResume.IsThumbnailFile));
+            Assert.False(File.Exists(Path.Combine(text, "001 Other Title.en.srt")));
+            Assert.False(File.Exists(Path.Combine(thum, "001 Newest Upload.jpg")));
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void TitleKey_IgnoresNumberAndLanguageSuffix()
+    {
+        Assert.True(DownloadTitleKey.Aligns(
+            "001 Why Didn't You Tell Anyone.mp4",
+            "Why Didn't You Tell Anyone"));
+        Assert.True(DownloadTitleKey.Aligns(
+            "002 Why Didn't You Tell Anyone.en.srt",
+            "001 Why Didn't You Tell Anyone.mp4"));
+        Assert.False(DownloadTitleKey.Aligns(
+            "001 Why Didn't You Tell Anyone.mp4",
+            "001 Newest Upload On Channel.mp4"));
+    }
+
+    [Fact]
+    public void Catalog_FindsWatchUrlByTitleNotPlaylistIndex()
+    {
+        var entries = PlaylistCatalog.Parse(
+        [
+            "newvideo001\t1\tNewest Upload On Channel",
+            "oldvideo001\t6\tWhy Didn't You Tell Anyone"
+        ]);
+        var found = PlaylistCatalog.Find("001 Why Didn't You Tell Anyone.mp4", 1, entries);
+
+        Assert.Equal("oldvideo001", found?.Id);
+        Assert.Equal("https://www.youtube.com/watch?v=oldvideo001", PlaylistCatalog.WatchUrl(found!.Id));
+        Assert.DoesNotContain("--playlist-end", YtDlpPlan.Catalog(
+            new DownloadTools(@"D:\tools\yt-dlp.exe", @"D:\tools\bin", @"D:\tools\cookies.txt"),
+            new ChannelDownloadRequest(@"D:\RV144", "https://www.youtube.com/@Chosen", 1, 9, 1, "en", "144")));
+    }
+
+    [Fact]
+    public void SubtitlePlan_ForExistingVideo_UsesWatchUrl()
+    {
+        var tools = new DownloadTools(@"D:\tools\yt-dlp.exe", @"D:\tools\bin", @"D:\tools\cookies.txt");
+        var request = new ChannelDownloadRequest(@"D:\RV144", "https://www.youtube.com/@Chosen", 1, 9, 1, "en", "144");
+        var slice = new DownloadSlice(1, 1, 1);
+        var args = YtDlpPlan.Subtitles(tools, request, slice, "https://www.youtube.com/watch?v=oldvideo001");
+
+        Assert.Equal("https://www.youtube.com/watch?v=oldvideo001", args[0]);
+        Assert.Contains("001 %(title).100s.%(ext)s", args);
+        Assert.DoesNotContain("--playlist-items", args);
     }
 
     [Fact]
@@ -361,12 +447,12 @@ public class DownloadTests
                     return Task.FromResult(new YtDlpRunResult(0, false, null));
                 }
 
-                if (args.Contains("--sub-langs") && After(args, "--playlist-items") == "3")
+                if (args.Contains("--sub-langs") && After(args, "--autonumber-start") == "3")
                 {
                     third = true;
                 }
 
-                if (args.Contains("--sub-langs") && After(args, "--playlist-items") == "2")
+                if (args.Contains("--sub-langs") && After(args, "--autonumber-start") == "2")
                 {
                     return Task.FromResult(new YtDlpRunResult(1, false, null));
                 }
@@ -387,6 +473,12 @@ public class DownloadTests
             Assert.Contains("Phụ đề", result.Detail);
             Assert.True(third);
             Assert.DoesNotContain(runner.Calls, args => args.Contains("--format"));
+            Assert.Contains(
+                runner.Calls,
+                args => args.Contains("--sub-langs") && args[0].Contains("watch?v=id000000002", StringComparison.Ordinal));
+            Assert.DoesNotContain(
+                runner.Calls,
+                args => args.Contains("--sub-langs") && args.Contains("--playlist-items"));
         }
         finally
         {
@@ -408,7 +500,7 @@ public class DownloadTests
                     return Task.FromResult(new YtDlpRunResult(0, false, null));
                 }
 
-                if (!args.Contains("--sub-langs") || After(args, "--playlist-items") != "2")
+                if (!args.Contains("--sub-langs") || After(args, "--autonumber-start") != "2")
                 {
                     return Task.FromResult(new YtDlpRunResult(0, false, null));
                 }
@@ -428,6 +520,9 @@ public class DownloadTests
             File.WriteAllText(Path.Combine(root, "source", "001 title.mp4"), "v");
             File.WriteAllText(Path.Combine(root, "source", "002 title.mp4"), "v");
             File.WriteAllText(Path.Combine(root, "text", "001 title.en.srt"), "s");
+            Directory.CreateDirectory(Path.Combine(root, "thum"));
+            File.WriteAllText(Path.Combine(root, "thum", "001 title.jpg"), "t");
+            File.WriteAllText(Path.Combine(root, "thum", "002 title.jpg"), "t");
             var result = await new SourceDownloader(runner, TimeSpan.Zero, TimeSpan.Zero, 4).DownloadAsync(
                 tools,
                 new ChannelDownloadRequest(root, "https://www.youtube.com/@Chosen", 1, 2, 1, "en", "144"),
@@ -475,6 +570,17 @@ public class DownloadTests
         log.OnLine(@"[download] Destination: D:\RV144\source\001 Title.mp4");
 
         Assert.Equal("RV144  Video: 001 Title.mp4", Assert.Single(notices).Text);
+    }
+
+    [Fact]
+    public void ActivityLog_ThumbKind_ShowsJpg()
+    {
+        var notices = new List<DownloadNotice>();
+        var log = new DownloadActivityLog(new ListProgress(notices), "Thumb", @"D:\RV144");
+        log.OnLine(@"[info] Writing video thumbnail 41 to: D:\RV144\thum\001 Title.jpg");
+
+        Assert.Equal("RV144  Thumb: 001 Title.jpg", Assert.Single(notices).Text);
+        Assert.Equal("001", notices[0].FileNumber);
     }
 
     [Fact]
@@ -593,25 +699,58 @@ public class DownloadTests
             CancellationToken cancellationToken)
         {
             var result = await inner.RunAsync(executable, arguments, log, cancellationToken);
-            if (result.ExitCode != 0 || !arguments.Contains("--sub-langs"))
+            if (result.ExitCode != 0)
             {
                 return result;
             }
 
-            var folder = arguments.Select(Prefix("subtitle:")).FirstOrDefault(path => path.Length > 0) ?? "";
             var numberText = After(arguments, "--autonumber-start");
-            if (folder.Length == 0 || !int.TryParse(numberText, out var number))
+            if (!int.TryParse(numberText, out var number))
             {
                 return result;
             }
 
-            Directory.CreateDirectory(folder);
-            if (!DownloadResume.HasCompleted(folder, number, DownloadResume.IsSubtitleFile))
+            if (arguments.Contains("--sub-langs"))
             {
-                File.WriteAllText(Path.Combine(folder, $"{number:000} title.en.srt"), "s");
+                WriteSidecar(
+                    arguments,
+                    "subtitle:",
+                    number,
+                    $"{number:000} title.en.srt",
+                    DownloadResume.IsSubtitleFile);
+            }
+
+            if (arguments.Contains("--write-thumbnail"))
+            {
+                WriteSidecar(
+                    arguments,
+                    "thumbnail:",
+                    number,
+                    $"{number:000} title.jpg",
+                    DownloadResume.IsThumbnailFile);
             }
 
             return result;
+        }
+
+        private static void WriteSidecar(
+            IReadOnlyList<string> arguments,
+            string prefix,
+            int number,
+            string fileName,
+            Func<string, bool> isCompleted)
+        {
+            var folder = arguments.Select(Prefix(prefix)).FirstOrDefault(path => path.Length > 0) ?? "";
+            if (folder.Length == 0)
+            {
+                return;
+            }
+
+            Directory.CreateDirectory(folder);
+            if (!DownloadResume.HasCompleted(folder, number, isCompleted))
+            {
+                File.WriteAllText(Path.Combine(folder, fileName), "s");
+            }
         }
 
         private static Func<string, string> Prefix(string prefix) =>
@@ -631,6 +770,21 @@ public class DownloadTests
             CancellationToken cancellationToken)
         {
             Calls.Add(arguments);
+            if (arguments.Contains("--flat-playlist"))
+            {
+                var end = 50;
+                var endText = After(arguments, "--playlist-end");
+                if (int.TryParse(endText, out var parsed) && parsed > 0)
+                {
+                    end = parsed;
+                }
+
+                for (var i = 1; i <= end; i++)
+                {
+                    log?.Report($"id{i.ToString().PadLeft(9, '0')}\t{i}\ttitle");
+                }
+            }
+
             return Handler?.Invoke(arguments, cancellationToken)
                 ?? Task.FromResult(new YtDlpRunResult(0, false, null));
         }

@@ -51,13 +51,20 @@ public partial class DownloadChannelRowViewModel : ObservableObject
     [ObservableProperty]
     private string _textProgress = "Phụ đề —";
 
+    [ObservableProperty]
+    private string _thumbProgress = "Thumb —";
+
     private readonly HashSet<string> _videoSeen = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly HashSet<string> _textSeen = new(StringComparer.OrdinalIgnoreCase);
 
+    private readonly HashSet<string> _thumbSeen = new(StringComparer.OrdinalIgnoreCase);
+
     private int _videoCount;
 
     private int _textCount;
+
+    private int _thumbCount;
 
     [ObservableProperty]
     private bool _isBusy;
@@ -66,10 +73,13 @@ public partial class DownloadChannelRowViewModel : ObservableObject
     {
         _videoSeen.Clear();
         _textSeen.Clear();
+        _thumbSeen.Clear();
         _videoCount = 0;
         _textCount = 0;
+        _thumbCount = 0;
         VideoProgress = "Video —";
         TextProgress = "Phụ đề —";
+        ThumbProgress = "Thumb —";
     }
 
     public void NoteDownload(string kind, string number)
@@ -83,6 +93,17 @@ public partial class DownloadChannelRowViewModel : ObservableObject
             }
 
             TextProgress = total > 0 ? $"Phụ đề {_textCount}/{total} · {number}" : $"Phụ đề {number}";
+            return;
+        }
+
+        if (string.Equals(kind, "Thumb", StringComparison.Ordinal))
+        {
+            if (_thumbSeen.Add(number))
+            {
+                _thumbCount++;
+            }
+
+            ThumbProgress = total > 0 ? $"Thumb {_thumbCount}/{total} · {number}" : $"Thumb {number}";
             return;
         }
 

@@ -366,6 +366,15 @@ public static class ValidationRules
         return issues;
     }
 
+    public static SubtitlePairCount CountSubtitlePairs(Template template, string root)
+    {
+        var issues = CheckSubtitleNames(template, root);
+        var drivers = FileScanner.ScanFolder(root, template.Driver.Folder, template.Driver.Extensions, template.Driver.NumberPattern);
+        var skipped = issues.Count;
+        var valid = Math.Max(0, drivers.Count - skipped);
+        return new SubtitlePairCount(drivers.Count, valid, skipped, issues);
+    }
+
     public static async Task ValidateDriverSubsAsync(
         ValidationContext ctx,
         IMediaProbe probe,

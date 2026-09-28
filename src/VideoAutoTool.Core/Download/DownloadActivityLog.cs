@@ -101,7 +101,7 @@ public sealed partial class DownloadActivityLog
         return end == 0 ? null : file[..end];
     }
 
-    private static bool TryDestination(string line, out string path)
+    private bool TryDestination(string line, out string path)
     {
         var match = Destination().Match(line);
         if (!match.Success)
@@ -111,7 +111,7 @@ public sealed partial class DownloadActivityLog
         }
 
         path = match.Groups["path"].Value.Trim().Trim('"');
-        return path.Length > 0 && !IsImage(path);
+        return path.Length > 0 && (_kind.Equals("Thumb", StringComparison.Ordinal) || !IsImage(path));
     }
 
     private static string DisplayName(string path)
@@ -152,6 +152,6 @@ public sealed partial class DownloadActivityLog
     [GeneratedRegex(@"\[download\]\s+(?:\d+(?:\.\d+)?%).*?\bat\s+(?<speed>\d+(?:\.\d+)?[KMG]?i?B/s)", RegexOptions.IgnoreCase)]
     private static partial Regex Speed();
 
-    [GeneratedRegex(@"^(?:\[download\] Destination:\s+(?<path>.+)|\[download\]\s+(?<path>.+?)\s+has already been downloaded|\[Merger\] Merging formats into ""(?<path>.+)""|\[info\] Writing video (?:subtitles|automatic captions) to:\s+(?<path>.+))$", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^(?:\[download\] Destination:\s+(?<path>.+)|\[download\]\s+(?<path>.+?)\s+has already been downloaded|\[Merger\] Merging formats into ""(?<path>.+)""|\[info\] Writing video (?:subtitles|automatic captions|thumbnail(?: \d+)?) to:\s+(?<path>.+))$", RegexOptions.IgnoreCase)]
     private static partial Regex Destination();
 }

@@ -7,6 +7,12 @@ public enum ValidationLevel
     Info
 }
 
+public sealed record SubtitlePairCount(
+    int Drivers,
+    int Valid,
+    int Skipped,
+    IReadOnlyList<ValidationIssue> Issues);
+
 public sealed record ValidationIssue(
     string Code,
     ValidationLevel Level,

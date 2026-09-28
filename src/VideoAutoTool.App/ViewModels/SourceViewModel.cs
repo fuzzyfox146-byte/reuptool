@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using VideoAutoTool.App.Services;
 using VideoAutoTool.Core.Planning;
+using VideoAutoTool.Core.Queue;
 using VideoAutoTool.Core.Render;
 using VideoAutoTool.Core.Scanning;
 using VideoAutoTool.Core.Templates;
@@ -62,6 +63,7 @@ public sealed partial class SourceViewModel : ObservableObject
         _workingTemplate = TemplateStore.Clone(design.ExportTemplate());
         _design.DesignsChanged += (_, _) => ReloadDesignList();
         _queue.BusyChanged += (_, _) => NotifyRenderCommands();
+        _queue.BatchFinished += OnQueueBatchFinished;
         ReloadDesignList();
     }
 
@@ -217,13 +219,19 @@ public sealed partial class SourceViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(CanStartRender))]
     private async Task RenderCountAsync()
     {
-        await StartRenderAsync(testOnly: false, limit: RenderCount);
+        await StartRenderAsync(testOnly: false, limit: RenderCount, requireAllValid: false);
     }
 
     [RelayCommand(CanExecute = nameof(CanStartRender))]
     private async Task RenderAllAsync()
     {
-        await StartRenderAsync(testOnly: false, limit: null);
+        await StartRenderAsync(testOnly: false, limit: null, requireAllValid: true);
+    }
+
+    [RelayCommand(CanExecute = nameof(CanStartRender))]
+    private async Task RenderValidAsync()
+    {
+        await StartRenderAsync(testOnly: false, limit: null, requireAllValid: false);
     }
 
     public void ReloadDesignList()
@@ -265,7 +273,7 @@ public sealed partial class SourceViewModel : ObservableObject
         RebuildRows();
     }
 
-    private async Task StartRenderAsync(bool testOnly, int? limit = null)
+    private async Task StartRenderAsync(bool testOnly, int? limit = null, bool requireAllValid = false)
     {
         if (!CanStartRender)
         {
@@ -278,27 +286,30 @@ public sealed partial class SourceViewModel : ObservableObject
         try
         {
             var template = BuildRenderTemplate();
-            if (!testOnly)
+            var pairs = testOnly
+                ? new SubtitlePairCount(0, 0, 0, [])
+                : ShowSubtitlePairs(template);
+            if (!testOnly && pairs.Valid == 0)
             {
-                var subtitleErrors = ValidationRules.CheckSubtitleNames(template, RootFolder);
-                if (subtitleErrors.Count > 0)
-                {
-                    ValidationMessages.Clear();
-                    foreach (var issue in subtitleErrors)
-                    {
-                        ValidationMessages.Add(issue);
-                    }
+                Status = pairs.Drivers == 0
+                    ? "Không có video nguồn để render."
+                    : $"0/{pairs.Drivers} video hợp lệ (SRT phải trùng số thứ tự với video). Không đưa vào hàng đợi.";
+                return;
+            }
 
-                    Status = $"{subtitleErrors.Count} video lỗi phụ đề (tên SRT không khớp video nguồn). Chưa đưa vào hàng đợi.";
-                    return;
-                }
+            if (!testOnly && requireAllValid && pairs.Skipped > 0)
+            {
+                Status = $"Chưa đưa vào hàng đợi: {pairs.Valid}/{pairs.Drivers} hợp lệ, {pairs.Skipped} lệch SRT. Sửa hết hoặc bấm Render video hợp lệ.";
+                return;
             }
 
             Status = "Đang lập kế hoạch job…";
             var plan = await _planner.PlanAsync(template, RootFolder, CancellationToken.None);
             if (plan.Jobs.Count == 0)
             {
-                Status = "Không có job nào để render (kiểm tra nguồn / nền đủ dài).";
+                Status = pairs.Skipped > 0
+                    ? $"Không có video hợp lệ. Đã bỏ qua {pairs.Skipped} video (SRT không khớp số)."
+                    : "Không có job nào để render (kiểm tra nguồn / nền đủ dài).";
                 return;
             }
 
@@ -322,7 +333,9 @@ public sealed partial class SourceViewModel : ObservableObject
                 }
 
                 request = new RenderRequest(RenderMode.Full);
-                Status = $"Đưa {plan.Jobs.Count} video của nguồn này vào hàng đợi.";
+                Status = pairs.Skipped > 0
+                    ? $"Hợp lệ {pairs.Valid}/{pairs.Drivers} video (khớp số SRT). Bỏ qua {pairs.Skipped}. Đưa {plan.Jobs.Count} vào hàng đợi."
+                    : $"Đưa {plan.Jobs.Count} video hợp lệ vào hàng đợi.";
             }
 
             var sourceName = Path.GetFileName(RootFolder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
@@ -435,12 +448,40 @@ public sealed partial class SourceViewModel : ObservableObject
         }
     }
 
+    private SubtitlePairCount ShowSubtitlePairs(Template template)
+    {
+        var pairs = ValidationRules.CountSubtitlePairs(template, RootFolder);
+        ValidationMessages.Clear();
+        foreach (var issue in pairs.Issues)
+        {
+            ValidationMessages.Add(issue);
+        }
+
+        return pairs;
+    }
+
+    private void OnQueueBatchFinished(object? sender, QueueBatchFinished e)
+    {
+        RefreshFolderStats();
+        if (string.IsNullOrWhiteSpace(RootFolder) || !Directory.Exists(RootFolder))
+        {
+            return;
+        }
+
+        var pairs = ShowSubtitlePairs(BuildRenderTemplate());
+        var moved = e.MovedCount > 0 && !string.IsNullOrWhiteSpace(e.RenderedFolder)
+            ? $" Đã chuyển {e.MovedCount} video đã render sang {e.RenderedFolder}."
+            : "";
+        Status = $"Render xong.{moved} Còn {pairs.Valid}/{pairs.Drivers} video hợp lệ (khớp số SRT), {pairs.Skipped} bỏ qua.";
+    }
+
     private void NotifyRenderCommands()
     {
         OnPropertyChanged(nameof(CanStartRender));
         TestRenderCommand.NotifyCanExecuteChanged();
         RenderCountCommand.NotifyCanExecuteChanged();
         RenderAllCommand.NotifyCanExecuteChanged();
+        RenderValidCommand.NotifyCanExecuteChanged();
     }
 
     private static string RoleLabel(SourceFolderKind kind) => kind switch

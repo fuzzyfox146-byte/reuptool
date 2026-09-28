@@ -89,6 +89,8 @@ public sealed partial class QueueViewModel : ObservableObject
 
     public event EventHandler? BusyChanged;
 
+    public event EventHandler<QueueBatchFinished>? BatchFinished;
+
     public Task EnqueueAsync(
         string sourceName,
         Template template,
@@ -164,10 +166,17 @@ public sealed partial class QueueViewModel : ObservableObject
             }
 
             var progress = _queue.GetProgress();
+            var archived = ArchiveRenderedSources();
             Status = progress.FailedJobs > 0
                 ? $"Xong: {progress.CompletedJobs}/{progress.TotalJobs} thành công, {progress.FailedJobs} lỗi."
                 : $"Xong: {progress.CompletedJobs}/{progress.TotalJobs} job.";
+            if (archived.MovedCount > 0 && !string.IsNullOrWhiteSpace(archived.RenderedFolder))
+            {
+                Status += $" Đã chuyển {archived.MovedCount} video sang {archived.RenderedFolder}.";
+            }
+
             AppendLog(Status);
+            BatchFinished?.Invoke(this, archived with { Completed = progress.CompletedJobs, Failed = progress.FailedJobs });
         }
         catch (OperationCanceledException)
         {
@@ -300,6 +309,40 @@ public sealed partial class QueueViewModel : ObservableObject
         AppendLog(Status);
         NotifyQueueCommands();
         StartLoop(_lastParallel, CancellationToken.None);
+    }
+
+    private QueueBatchFinished ArchiveRenderedSources()
+    {
+        if (_queue is null)
+        {
+            return new QueueBatchFinished(0, 0, 0, null);
+        }
+
+        var done = _queue.GetJobs()
+            .Where(job => job.Status == JobStatus.Done && job.ClipSeconds is null)
+            .OrderBy(job => job.FinishedAt ?? DateTime.MaxValue)
+            .ToList();
+        if (done.Count == 0)
+        {
+            return new QueueBatchFinished(0, 0, 0, null);
+        }
+
+        try
+        {
+            var folder = RenderedSourceMover.FolderFor(done[0].DriverPath);
+            var moved = RenderedSourceMover.Move(done.Select(job => job.DriverPath), folder);
+            if (moved.Count > 0)
+            {
+                AppendLog($"Đã chuyển {moved.Count} video đã render sang {folder}.");
+            }
+
+            return new QueueBatchFinished(0, 0, moved.Count, folder);
+        }
+        catch (Exception ex)
+        {
+            AppendLog("Không chuyển được video đã render: " + ex.Message);
+            return new QueueBatchFinished(0, 0, 0, null);
+        }
     }
 
     [RelayCommand(CanExecute = nameof(CanClearQueue))]
