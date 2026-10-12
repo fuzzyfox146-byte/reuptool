@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype">
+    <value>text/microsoft-resx</value>
+  </resheader>
+  <resheader name="version">
+    <value>2.0</value>
+  </resheader>
+  <resheader name="reader">
+    <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <resheader name="writer">
+    <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+  </resheader>
+  <data name="Title" xml:space="preserve">
+    <value>Tải video + thumb</value>
+  </data>
+  <data name="Blurb" xml:space="preserve">
+    <value>Nhập link kênh và tên folder (ví dụ HD036). Folder đó chứa thư mục video và thumb, file đánh số 001, 002. Không tải phụ đề. Nhiều video tải cùng lúc. File đã có thì bỏ qua.</value>
+  </data>
+  <data name="YtDlp" xml:space="preserve">
+    <value>yt-dlp.exe</value>
+  </data>
+  <data name="Cookies" xml:space="preserve">
+    <value>Cookie dùng chung (cookies.txt)</value>
+  </data>
+  <data name="Root" xml:space="preserve">
+    <value>Thư mục gốc (chứa HD036)</value>
+  </data>
+  <data name="Quality" xml:space="preserve">
+    <value>Chất lượng video</value>
+  </data>
+  <data name="Parallel" xml:space="preserve">
+    <value>Số video cùng lúc</value>
+  </data>
+  <data name="AddChannel" xml:space="preserve">
+    <value>Thêm kênh</value>
+  </data>
+  <data name="StartAll" xml:space="preserve">
+    <value>Tải tất cả</value>
+  </data>
+  <data name="StopAll" xml:space="preserve">
+    <value>Dừng hết</value>
+  </data>
+  <data name="Folder" xml:space="preserve">
+    <value>Tên folder</value>
+  </data>
+  <data name="Link" xml:space="preserve">
+    <value>Link kênh</value>
+  </data>
+  <data name="From" xml:space="preserve">
+    <value>Từ</value>
+  </data>
+  <data name="To" xml:space="preserve">
+    <value>Đến</value>
+  </data>
+  <data name="Number" xml:space="preserve">
+    <value>Số</value>
+  </data>
+  <data name="Progress" xml:space="preserve">
+    <value>Tiến độ</value>
+  </data>
+  <data name="Browse" xml:space="preserve">
+    <value>Duyệt</value>
+  </data>
+  <data name="Start" xml:space="preserve">
+    <value>Tải</value>
+  </data>
+  <data name="Remove" xml:space="preserve">
+    <value>Xóa</value>
+  </data>
+  <data name="Log" xml:space="preserve">
+    <value>Nhật ký, 30 dòng cuối</value>
+  </data>
+  <data name="PickYtDlp" xml:space="preserve">
+    <value>Chọn yt-dlp.exe</value>
+  </data>
+  <data name="PickCookies" xml:space="preserve">
+    <value>Chọn cookies.txt dùng chung</value>
+  </data>
+  <data name="PickRoot" xml:space="preserve">
+    <value>Chọn thư mục gốc</value>
+  </data>
+  <data name="PickChannel" xml:space="preserve">
+    <value>Chọn folder kênh (ví dụ HD036)</value>
+  </data>
+  <data name="Idle" xml:space="preserve">
+    <value>Đặt tên folder HD036, dán link kênh, chọn 720p rồi bấm Tải.</value>
+  </data>
+  <data name="Busy" xml:space="preserve">
+    <value>Đang tải video và thumb. Không tải phụ đề.</value>
+  </data>
+  <data name="Ready" xml:space="preserve">
+    <value>Xong lượt này. File đã có sẽ không tải lại.</value>
+  </data>
+  <data name="MissingYtDlp" xml:space="preserve">
+    <value>Không thấy yt-dlp. Hãy chọn file yt-dlp.exe.</value>
+  </data>
+  <data name="MissingCookies" xml:space="preserve">
+    <value>Không thấy file cookie. Hãy chọn cookies.txt dùng chung.</value>
+  </data>
+  <data name="MissingFfmpeg" xml:space="preserve">
+    <value>Không thấy ffmpeg.exe trong thư mục bin cạnh yt-dlp.</value>
+  </data>
+  <data name="AlreadyRunning" xml:space="preserve">
+    <value>Đang tải. Bấm Dừng hết trước khi tải lượt khác.</value>
+  </data>
+  <data name="Waiting" xml:space="preserve">
+    <value>Chờ</value>
+  </data>
+  <data name="Running" xml:space="preserve">
+    <value>Đang tải...</value>
+  </data>
+  <data name="Stopped" xml:space="preserve">
+    <value>Đã dừng</value>
+  </data>
+  <data name="Error" xml:space="preserve">
+    <value>Lỗi</value>
+  </data>
+  <data name="VideoIdle" xml:space="preserve">
+    <value>Video —</value>
+  </data>
+  <data name="ThumbIdle" xml:space="preserve">
+    <value>Thumb —</value>
+  </data>
+  <data name="FileFilterExe" xml:space="preserve">
+    <value>yt-dlp (*.exe)|*.exe|Tất cả (*.*)|*.*</value>
+  </data>
+  <data name="FileFilterCookie" xml:space="preserve">
+    <value>Cookie (*.txt)|*.txt|Tất cả (*.*)|*.*</value>
+  </data>
+</root>

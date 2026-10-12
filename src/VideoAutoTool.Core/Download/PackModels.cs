@@ -1,0 +1,77 @@
+namespace VideoAutoTool.Core.Download;
+
+public sealed record PackChannelRequest(
+    string RootFolder,
+    string FolderName,
+    string ChannelUrl,
+    int PlaylistStart,
+    int PlaylistEnd,
+    int NameStart,
+    string Quality);
+
+public sealed record PackDownloadResult(string ChannelFolder, DownloadStop Stop, string Detail);
+
+public sealed record PackItem(int PlaylistIndex, int Number, bool NeedVideo, bool NeedThumb);
+
+public static class PackFolders
+{
+    public const string VideoFolder = "video";
+    public const string ThumbFolder = "thumb";
+    public const string TempFolder = "temp";
+
+    public static string? InvalidName(string? folderName)
+    {
+        var name = (folderName ?? "").Trim();
+        if (name.Length == 0)
+        {
+            return "Nhập tên folder, ví dụ HD036.";
+        }
+
+        if (name is "." or ".." || name.Contains("..", StringComparison.Ordinal))
+        {
+            return "Tên folder không hợp lệ.";
+        }
+
+        if (name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+        {
+            return "Tên folder có ký tự không dùng được.";
+        }
+
+        return null;
+    }
+
+    public static string Channel(PackChannelRequest request)
+    {
+        var root = (request.RootFolder ?? "").Trim();
+        var name = (request.FolderName ?? "").Trim();
+        if (root.Length == 0 || name.Length == 0)
+        {
+            return root.Length == 0 ? name : Path.Combine(root, name);
+        }
+
+        return Path.GetFullPath(Path.Combine(root, name));
+    }
+
+    public static string Video(string channelFolder) => Path.Combine(channelFolder, VideoFolder);
+
+    public static string Thumb(string channelFolder) => Path.Combine(channelFolder, ThumbFolder);
+
+    public static string Temp(string channelFolder) => Path.Combine(channelFolder, TempFolder);
+
+    public static IReadOnlyList<PackItem> Pending(string videoDir, string thumbDir, PackChannelRequest request)
+    {
+        var items = new List<PackItem>();
+        for (var index = request.PlaylistStart; index <= request.PlaylistEnd; index++)
+        {
+            var number = request.NameStart + (index - request.PlaylistStart);
+            var needVideo = !DownloadResume.HasCompleted(videoDir, number, DownloadResume.IsVideoFile);
+            var needThumb = !DownloadResume.HasCompleted(thumbDir, number, DownloadResume.IsThumbnailFile);
+            if (needVideo || needThumb)
+            {
+                items.Add(new PackItem(index, number, needVideo, needThumb));
+            }
+        }
+
+        return items;
+    }
+}
