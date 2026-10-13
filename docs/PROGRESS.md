@@ -8,6 +8,7 @@
 - Git: branch `gpu-render`. Fix lệch số thumb/sub/video + render hợp lệ đã publish `publish-2.1.3-opt`.
 
 ## Done
+- Frame Render 2 có ô **Chất lượng**: 720p (1280×720) hoặc 480p (854×480). Chọn 480p rồi **Bắt đầu**. File xuất đã có ở 720p thì vẫn Bỏ qua, không render lại 480p.
 - Frame Render 2: chọn nguồn `D:\HD044\video` thì ô xuất thành `D:\HD044\xuat`. Folder chưa có thì tạo, có rồi thì dùng. Bản hàng đợi thường không tự đổi ô xuất.
 - Bản đang mở `FrameRender.exe` (tiêu đề **Frame Render — hàng đợi**, hàng `%AppData%\FrameRender`) khác bản 2. Ctrl+S trước đây không gắn. GPU bản cũ khóa 3 video. Bản mới xóa hẳn dòng **Bỏ qua** khỏi hàng, Ctrl+S lưu cấu hình và áp dụng **Số video cùng lúc** (1–16). Tiến độ `x/tất cả` vẫn tính video đã có.
 - Frame Render 2 lấy đúng ô **Số video cùng lúc**. Trước đây bật GPU thì khóa cứng 3 dù ô ghi 5. Giờ số trong ô là số ffmpeg chạy (1–16). Đổi số lúc đang render: bấm Enter hoặc click ra ngoài ô, không cần hủy. Hết chỗ đĩa thì máy vẫn tự giảm và ô cập nhật theo.
@@ -29,7 +30,7 @@
 - Hàng đợi ghi `%AppData%\<edition>\queue.json` (job + plan + template nguồn). Mở lại khôi phục; job đang chạy lúc đóng về Chờ. Bấm **Render tiếp** để chạy phần còn. **Xóa hàng đợi** vẫn xóa file.
 - Tải nguồn: không ghi file lịch sử. Video tải tiếp từ số mp4 lớn nhất + 1. Phụ đề/thumb theo **video cùng số** (ghép title → watch URL), không theo vị trí playlist hôm nay. File lệch tên bị xóa rồi tải lại. Lỗ không có video thì bỏ. Sau số video lớn nhất vẫn bù đến số nhập. Retry 4 lần / 8s. Video mới vẫn ghi thumb khi tải mp4.
 - Render: **Render hết** chỉ đưa vào hàng đợi khi mọi video đều khớp SRT. **Render video hợp lệ** đưa các cặp khớp, bỏ qua video lệch. Hàng đợi xong thì chuyển video Done sang `rendered` (folder cha của video đầu tiên) và báo số cặp còn hợp lệ.
-- `dotnet build` FrameRender: 0 warning. `FrameBatchTests`: 14 passed (video đã có không chiếm lượt của số tiếp theo).
+- `dotnet build` FrameRender: 0 warning. `FrameBatchTests`: 15 passed (thêm khung xuất 480p 854×480).
 
 ## Decisions
 - Không đổi layout / preset NVENC / màu bt709 / graph 480p `gbrp`.
@@ -48,7 +49,7 @@
 - SSIM ≥ 0.99 so với `publish-2.0.0-gpu` chưa đo.
 
 ## Next step
-- Bản 2 đang mở nên chưa ghi đè được `publish-frame-2`. Bản có tự xuất: đóng cửa sổ rồi mở `D:\Coding\publish-frame-2-next\FrameRender2.exe`. Chọn `D:\HD044\video` thì ô xuất thành `D:\HD044\xuat`. Đóng cửa sổ vẫn còn hàng đợi (kể cả tạm dừng / đã hủy). **Xóa hàng đợi** mới xóa. Mỗi folder hiện `x/tất cả`. GPU bật sẵn. Nguồn `D:\HD037\video` hiện là HD037. File xuất nằm thẳng trong folder xuất, video đã có thì Bỏ qua, không tạo folder con.
+- Bản 2: mở `D:\Coding\publish-frame-2\FrameRender2.exe`. Ô **Chất lượng** chọn `480p` rồi **Bắt đầu**. Nhật ký phải có `Xuất 854x480`. Đóng cửa sổ vẫn còn hàng đợi (kể cả tạm dừng / đã hủy). **Xóa hàng đợi** mới xóa. Mỗi folder hiện `x/tất cả`. GPU bật sẵn. Nguồn `D:\HD037\video` hiện là HD037. File xuất nằm thẳng trong folder xuất, video đã có thì Bỏ qua, không tạo folder con.
 - Chạy tool riêng: `dotnet run --project src/HdDownloader`. Đặt tên folder `HD036`, dán link kênh, chất lượng 720. Ra `HD036\video` và `HD036\thumb`. Không tải phụ đề.
 - Chạy `D:\Coding\publish-2.1.3-opt\VideoAutoTool.App.exe` rồi **Tải tiếp** `D:\CO139` để xóa thumb/SRT lệch và tải lại theo title video.
 - Đừng mở đồng thời hai bản Opt rồi ghi cùng file xuất.

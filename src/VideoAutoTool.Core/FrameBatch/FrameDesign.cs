@@ -4,6 +4,7 @@ public static class FrameDesign
 {
     public const int Width = 1280;
     public const int Height = 720;
+    public const int OutputHeight480 = 480;
     public const int Fps = 25;
     public const int RefWidth = 1672;
     public const int RefHeight = 941;
@@ -32,7 +33,17 @@ public static class FrameDesign
     public static readonly string[] FrameExtensions = [".png"];
 
     public static int ParallelVideos(int requested) => Math.Clamp(requested, 1, MaxParallelVideos);
+
+    public static int NormalizeOutputHeight(int height) =>
+        height == OutputHeight480 ? OutputHeight480 : Height;
+
+    public static FrameCanvas CanvasFor(int height) =>
+        NormalizeOutputHeight(height) == OutputHeight480
+            ? new FrameCanvas(854, OutputHeight480)
+            : new FrameCanvas(Width, Height);
 }
+
+public readonly record struct FrameCanvas(int Width, int Height);
 
 public sealed record FrameSettings(
     int Width = FrameDesign.Width,

@@ -463,8 +463,8 @@ public sealed class QueueController
         Log("Đã xóa hàng đợi.");
     }
 
-    public QueueSnapshot Capture(string videos, string frames, string backgrounds, string output, string scale, string opacity, string noise, string crf, string workers, bool gpu, bool random) =>
-        new(videos, frames, backgrounds, output, scale, opacity, noise, crf, workers, gpu, random, _items.ToList(), _batchSize, _intakeSequence, _intakeOrder.ToList(), _kept.ToList());
+    public QueueSnapshot Capture(string videos, string frames, string backgrounds, string output, string scale, string opacity, string noise, string crf, string workers, bool gpu, bool random, int outputHeight) =>
+        new(videos, frames, backgrounds, output, scale, opacity, noise, crf, workers, gpu, random, _items.ToList(), _batchSize, _intakeSequence, _intakeOrder.ToList(), _kept.ToList(), FrameDesign.NormalizeOutputHeight(outputHeight));
 
     public void Save(QueueSnapshot snapshot)
     {
@@ -1042,7 +1042,8 @@ public sealed record QueueSnapshot(
     int BatchSize = 0,
     int IntakeSequence = 0,
     List<string>? IntakeOrder = null,
-    List<KeptClip>? Kept = null);
+    List<KeptClip>? Kept = null,
+    int OutputHeight = FrameDesign.Height);
 
 public sealed class KeptClip
 {

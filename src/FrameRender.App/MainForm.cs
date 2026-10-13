@@ -17,6 +17,7 @@ public sealed class MainForm : Form
     private readonly TextBox _crf = new() { Text = "20", Width = 48 };
     private readonly TextBox _workers = new() { Text = Math.Max(1, Environment.ProcessorCount / 2).ToString(CultureInfo.InvariantCulture), Width = 48 };
     private readonly TextBox _batch = new() { Text = FrameIntake.DefaultBatchSize.ToString(CultureInfo.InvariantCulture), Width = 48 };
+    private readonly ComboBox _quality = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 88 };
     private readonly CheckBox _gpu = new() { Text = "GPU (NVENC)", AutoSize = true, Checked = true };
     private readonly CheckBox _random = new() { Text = "Chọn ngẫu nhiên", AutoSize = true };
     private readonly DataGridView _main = new();
@@ -100,6 +101,8 @@ public sealed class MainForm : Form
                 _batch.Text = saved.BatchSize.ToString(CultureInfo.InvariantCulture);
             }
 
+            _quality.SelectedIndex = FrameDesign.NormalizeOutputHeight(saved.OutputHeight) == FrameDesign.OutputHeight480 ? 1 : 0;
+
             var paused = saved.Jobs.Count(row => row.State == FrameDesign.Paused);
             var cancelled = saved.Jobs.Count(row => row.State == FrameDesign.Cancelled);
             var todo = saved.Jobs.Count(row => row.State is FrameDesign.Wait or FrameDesign.Paused or FrameDesign.Failed or FrameDesign.Cancelled);
@@ -166,6 +169,13 @@ public sealed class MainForm : Form
         AddNumber(options, "CRF", _crf);
         AddNumber(options, "Số video cùng lúc", _workers);
         AddNumber(options, "Mỗi folder", _batch);
+        _quality.Items.AddRange(["720p", "480p"]);
+        _quality.SelectedIndex = 0;
+        _quality.BackColor = Color.FromArgb(45, 45, 48);
+        _quality.ForeColor = Color.White;
+        _quality.FlatStyle = FlatStyle.Flat;
+        options.Controls.Add(new Label { Text = "Chất lượng", AutoSize = true, ForeColor = Color.White, Padding = new Padding(8, 6, 4, 0) });
+        options.Controls.Add(_quality);
         StyleCheck(_gpu);
         StyleCheck(_random);
         options.Controls.Add(_gpu);
@@ -472,7 +482,7 @@ public sealed class MainForm : Form
             }
         }
 
-        _encoder.Text = _gpu.Checked ? "NVENC GPU" : "libx264 CPU";
+        _encoder.Text = (_gpu.Checked ? "NVENC GPU" : "libx264 CPU") + (SelectedOutputHeight() == FrameDesign.OutputHeight480 ? " · 480p" : " · 720p");
         _batch.Enabled = _queue.BatchSize == 0;
     }
 
@@ -556,6 +566,9 @@ public sealed class MainForm : Form
         }
     }
 
+    private int SelectedOutputHeight() =>
+        _quality.SelectedIndex == 1 ? FrameDesign.OutputHeight480 : FrameDesign.Height;
+
     private void SaveConfig()
     {
         ApplyWorkers();
@@ -597,7 +610,10 @@ public sealed class MainForm : Form
         {
             var workers = FrameDesign.ParallelVideos(int.Parse(_workers.Text.Trim(), CultureInfo.InvariantCulture));
             _workers.Text = workers.ToString(CultureInfo.InvariantCulture);
+            var canvas = FrameDesign.CanvasFor(SelectedOutputHeight());
             settings = new FrameSettings(
+                Width: canvas.Width,
+                Height: canvas.Height,
                 VideoScale: double.Parse(_scale.Text.Trim(), CultureInfo.InvariantCulture),
                 VideoOpacity: double.Parse(_opacity.Text.Trim(), CultureInfo.InvariantCulture),
                 Crf: int.Parse(_crf.Text.Trim(), CultureInfo.InvariantCulture),
@@ -605,7 +621,7 @@ public sealed class MainForm : Form
                 Workers: workers,
                 Threads: Math.Max(1, (Environment.ProcessorCount) / workers));
             var layout = FrameLayoutMath.Create(settings);
-            _log.Items.Insert(0, $"Video chính {layout.VideoW}x{layout.VideoH} tại x={layout.X}, y={layout.Y}.");
+            _log.Items.Insert(0, $"Xuất {canvas.Width}x{canvas.Height}. Video chính {layout.VideoW}x{layout.VideoH} tại x={layout.X}, y={layout.Y}.");
             return true;
         }
         catch (FormatException)
@@ -633,7 +649,8 @@ public sealed class MainForm : Form
             _crf.Text,
             _workers.Text,
             _gpu.Checked,
-            _random.Checked));
+            _random.Checked,
+            SelectedOutputHeight()));
     }
 
     private void AddFolder(TableLayoutPanel panel, int row, string label, TextBox box)

@@ -17,6 +17,25 @@ public class FrameBatchTests
     }
 
     [Fact]
+    public void Output480_Uses854By480Canvas()
+    {
+        var canvas = FrameDesign.CanvasFor(480);
+        Assert.Equal(854, canvas.Width);
+        Assert.Equal(480, canvas.Height);
+        Assert.Equal(720, FrameDesign.NormalizeOutputHeight(0));
+        Assert.Equal(480, FrameDesign.NormalizeOutputHeight(480));
+        var settings = new FrameSettings(Width: canvas.Width, Height: canvas.Height, Gpu: true);
+        var layout = FrameLayoutMath.Create(settings);
+        Assert.Equal(0, layout.VideoW % 2);
+        Assert.Equal(0, layout.VideoH % 2);
+        Assert.True(layout.VideoW < canvas.Width);
+        Assert.True(layout.VideoH < canvas.Height);
+        var graph = FrameCommands.FilterGpu(settings, layout);
+        Assert.Contains("scale_cuda=854:480:format=yuv420p", graph);
+        Assert.Contains($"scale_cuda={layout.VideoW}:{layout.VideoH}", graph);
+    }
+
+    [Fact]
     public void SmallerScale_Stays16By9AndCentered()
     {
         var layout = FrameLayoutMath.Create(new FrameSettings(VideoScale: 0.5));
