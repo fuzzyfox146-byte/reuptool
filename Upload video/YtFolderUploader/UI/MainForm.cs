@@ -12,23 +12,33 @@ public sealed partial class MainForm : Form
     int _sourceIndex = -1;
     int _loadDepth;
     bool _uploading;
+    readonly HashSet<string> _busyChannelIds = new();
     CancellationTokenSource? _uploadCts;
 
     bool Loading => _loadDepth > 0;
 
-    CheckedListBox lstChannels = null!;
+    ListBox lstChannels = null!;
+    TextBox txtListName = null!;
+    bool _listNameDirty;
     ListBox lstSources = null!;
     TextBox txtChannelName = null!;
     TextBox txtCredential = null!;
     Label lblAuth = null!;
     Button btnAuthorize = null!;
+    Button btnReauthorize = null!;
     Button btnTest = null!;
+    CancellationTokenSource? _authCts;
+    int _authGeneration;
     Button btnAddChannel = null!;
     Button btnRemoveChannel = null!;
+    Button btnRenameChannel = null!;
     TextBox txtSourceName = null!;
     TextBox txtVideoFolder = null!;
     TextBox txtThumbFolder = null!;
     CheckBox chkSourceEnabled = null!;
+    Label lblSourcePreview = null!;
+    ListBox lstPreview = null!;
+    DarkTabControl _tabs = null!;
     NumericUpDown numSourceStart = null!;
     NumericUpDown numFrom = null!;
     NumericUpDown numPerDay = null!;
@@ -51,16 +61,29 @@ public sealed partial class MainForm : Form
     CheckBox chkAutoLevels = null!;
     CheckBox chkStabilize = null!;
     ComboBox cboLicense = null!;
+    CheckBox chkExactDays = null!;
+    CheckBox chkDeleteAfter = null!;
     CheckBox chkKids = null!;
+    System.Windows.Forms.Timer? _autoTimer;
+    bool _autoDaily;
+    bool _autoTickRunning;
+    DateTimeOffset _autoNotBefore;
+    readonly Dictionary<string, DateOnly> _autoDone = new();
+    readonly HashSet<string> _autoStopped = new();
+    readonly HashSet<string> _autoArmed = new();
     CheckBox chkSynthetic = null!;
     CheckBox chkEmbed = null!;
     CheckBox chkStats = null!;
     CheckBox chkNotify = null!;
     TextBox txtPlaylist = null!;
+    ComboBox cboTemplate = null!;
+    TextBox txtTemplateName = null!;
+    Label lblTemplateHint = null!;
     DataGridView grid = null!;
     NumericUpDown numBatch = null!;
     Button btnScanOne = null!;
     Button btnScanAll = null!;
+    Button btnClearQueue = null!;
     Button btnUpload = null!;
     Button btnStop = null!;
     Button btnRetryThumbs = null!;
@@ -76,6 +99,11 @@ public sealed partial class MainForm : Form
         BuildUi();
         numBatch.Value = Math.Clamp(_data.MaxUploadsPerRun, (int)numBatch.Minimum, (int)numBatch.Maximum);
         RefreshChannelList(_data.Channels.FirstOrDefault()?.Id);
+        Shown += (_, _) =>
+        {
+            RefreshPreview();
+            ShowChannelQueue();
+        };
         Log("Cấu hình lưu tại " + _store.DirectoryPath);
         if (!string.IsNullOrEmpty(_store.RecoveryNote))
             Log(_store.RecoveryNote);
@@ -90,6 +118,16 @@ public sealed partial class MainForm : Form
         MinimumSize = new Size(1100, 720);
         Size = new Size(1280, 860);
         Font = new Font("Segoe UI", 9f);
+        KeyPreview = true;
+        KeyDown += (_, e) =>
+        {
+            if (!e.Control || e.KeyCode != Keys.S)
+                return;
+            SaveAll();
+            RefreshQueueFromSettings();
+            e.SuppressKeyPress = true;
+            e.Handled = true;
+        };
         BackColor = DarkTheme.Bg;
         ForeColor = DarkTheme.Text;
 
@@ -165,40 +203,78 @@ public sealed partial class MainForm : Form
                 return;
             }
 
+            _authCts?.Cancel();
             WriteCurrent();
             _data.MaxUploadsPerRun = (int)numBatch.Value;
+            SaveCurrentTemplate(announce: false);
             _store.Save(_data);
         };
     }
 
     Control BuildChannelList()
     {
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Padding = new Padding(8) };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Padding = new Padding(8) };
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 78));
-        lstChannels = new CheckedListBox { Dock = DockStyle.Fill, CheckOnClick = true, IntegralHeight = false };
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 108));
+        lstChannels = new ListBox { Dock = DockStyle.Fill, IntegralHeight = false, DrawMode = DrawMode.OwnerDrawFixed, ItemHeight = 22 };
         lstChannels.SelectedIndexChanged += ChannelSelected;
-        lstChannels.ItemCheck += ChannelItemCheck;
+        lstChannels.DrawItem += DrawChannel;
+        txtListName = new TextBox { Dock = DockStyle.Fill };
+        txtListName.TextChanged += (_, _) =>
+        {
+            if (!Loading)
+                _listNameDirty = true;
+        };
+        txtListName.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode != Keys.Enter)
+                return;
+            e.SuppressKeyPress = true;
+            ApplyListName(save: true);
+        };
 
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = true };
         btnAddChannel = MakeButton("Thêm kênh", AddChannel);
         btnRemoveChannel = MakeButton("Xóa kênh", RemoveChannel);
+        btnRenameChannel = MakeButton("Đổi tên", () => ApplyListName(save: true));
         buttons.Controls.Add(btnAddChannel);
         buttons.Controls.Add(btnRemoveChannel);
+        buttons.Controls.Add(btnRenameChannel);
         buttons.Controls.Add(MakeButton("Lưu", SaveAll));
         layout.Controls.Add(lstChannels, 0, 0);
-        layout.Controls.Add(buttons, 0, 1);
+        layout.Controls.Add(txtListName, 0, 1);
+        layout.Controls.Add(buttons, 0, 2);
         return layout;
+    }
+
+    void DrawChannel(object? sender, DrawItemEventArgs e)
+    {
+        if (e.Index < 0 || lstChannels.Items[e.Index] is not ChannelProfile channel)
+            return;
+
+        var selected = (e.State & DrawItemState.Selected) != 0;
+        using var back = new SolidBrush(selected ? DarkTheme.Select : lstChannels.BackColor);
+        e.Graphics.FillRectangle(back, e.Bounds);
+        var text = channel.ShortSource ? channel + "   thiếu video" : channel.ToString();
+        var color = channel.ShortSource ? DarkTheme.Bad : DarkTheme.Text;
+        var textRect = new Rectangle(e.Bounds.X + 8, e.Bounds.Y, Math.Max(0, e.Bounds.Width - 12), e.Bounds.Height);
+        TextRenderer.DrawText(e.Graphics, text, e.Font ?? Font, textRect, color, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.Left);
     }
 
     Control BuildTabs()
     {
-        var tabs = new DarkTabControl { Dock = DockStyle.Fill };
-        tabs.TabPages.Add(BuildQueuePage());
-        tabs.TabPages.Add(BuildChannelPage());
-        tabs.TabPages.Add(BuildSourcePage());
-        tabs.TabPages.Add(BuildOptionsPage());
-        return tabs;
+        _tabs = new DarkTabControl { Dock = DockStyle.Fill };
+        _tabs.TabPages.Add(BuildQueuePage());
+        _tabs.TabPages.Add(BuildChannelPage());
+        _tabs.TabPages.Add(BuildSourcePage());
+        _tabs.TabPages.Add(BuildOptionsPage());
+        _tabs.SelectedIndexChanged += (_, _) =>
+        {
+            if (!Loading && _tabs.SelectedTab?.Text == "Nguồn video")
+                RefreshPreview();
+        };
+        return _tabs;
     }
 
     TabPage BuildQueuePage()
@@ -214,7 +290,7 @@ public sealed partial class MainForm : Form
         btnScanAll = MakeButton("Quét tất cả kênh bật", () => Scan(SelectedChannelsOnly: false));
         btnUpload = MakeButton("Đăng video đã chọn", () => _ = UploadAsync());
         btnUpload.Tag = "accent";
-        btnStop = MakeButton("Dừng", () => _uploadCts?.Cancel());
+        btnStop = MakeButton("Dừng", StopAuto);
         btnStop.Enabled = false;
         btnRetryThumbs = MakeButton("Gắn lại thumbnail", () => _ = RetryThumbnailsAsync());
         tools.Controls.Add(btnScanOne);
@@ -222,6 +298,9 @@ public sealed partial class MainForm : Form
         tools.Controls.Add(btnUpload);
         tools.Controls.Add(btnStop);
         tools.Controls.Add(btnRetryThumbs);
+        tools.Controls.Add(MakeButton("Xóa video và thumb đã đăng", DeleteUploadedFiles));
+        btnClearQueue = MakeButton("Xóa hàng đợi", ClearChannelQueue);
+        tools.Controls.Add(btnClearQueue);
         tools.Controls.Add(MakeButton("Chọn video chờ", () => SetChecks(item => string.IsNullOrEmpty(item.YoutubeVideoId))));
         tools.Controls.Add(MakeButton("Bỏ chọn", () => SetChecks(_ => false)));
         var batch = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(8, 0, 0, 0) };
@@ -233,8 +312,9 @@ public sealed partial class MainForm : Form
         var from = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(8, 0, 0, 0) };
         from.Controls.Add(new Label { Text = "Từ số", AutoSize = true, Margin = new Padding(0, 8, 4, 0) });
         numFrom = new NumericUpDown { Minimum = 0, Maximum = 9999, Width = 64, Margin = new Padding(0, 4, 6, 0) };
+        numFrom.ValueChanged += (_, _) => RefreshQueueFromSettings();
         from.Controls.Add(numFrom);
-        from.Controls.Add(MakeButton("Bỏ số nhỏ hơn", ApplyFromIndex));
+        from.Controls.Add(MakeButton("Bỏ số nhỏ hơn", () => RefreshQueueFromSettings()));
         tools.Controls.Add(from);
         lblSummary = new Label { Text = "Chưa quét", AutoSize = true, Margin = new Padding(12, 8, 0, 0) };
         tools.Controls.Add(lblSummary);
@@ -307,6 +387,10 @@ public sealed partial class MainForm : Form
             if (Loading || _current == null)
                 return;
             _current.Name = txtChannelName.Text.Trim();
+            BeginLoad();
+            txtListName.Text = _current.Name;
+            EndLoad();
+            _listNameDirty = false;
             UpdateChannelListText();
         };
         stack.AddLabel("Dán JSON OAuth Desktop, hoặc JSON đã có refresh_token. Mỗi kênh một token của đúng tài khoản đó.");
@@ -320,13 +404,15 @@ public sealed partial class MainForm : Form
         }, 150);
         txtCredential.TextChanged += OnEdited;
         lblAuth = stack.AddLabel("Chưa có kênh.");
-        var row = new FlowLayoutPanel { Height = 40, WrapContents = false };
+        var row = new FlowLayoutPanel { Height = 72, WrapContents = true };
         btnAuthorize = MakeButton("Ủy quyền kênh này", () => _ = AuthorizeAsync());
+        btnReauthorize = MakeButton("Ủy quyền lại", () => _ = AuthorizeAsync());
         btnTest = MakeButton("Kiểm tra kết nối", () => _ = TestConnectionAsync());
         row.Controls.Add(btnAuthorize);
+        row.Controls.Add(btnReauthorize);
         row.Controls.Add(btnTest);
         row.Controls.Add(MakeButton("Mở thư mục cấu hình", OpenDataFolder));
-        stack.Add(row, 40);
+        stack.Add(row, 72);
         stack.AddLabel(
             "Cách lấy quyền đăng\r\n" +
             "1. Tạo project trên Google Cloud Console. Mỗi project có hạn mức upload riêng.\r\n" +
@@ -334,6 +420,7 @@ public sealed partial class MainForm : Form
             "3. OAuth consent screen: External, thêm Gmail của kênh vào Test users.\r\n" +
             "4. Credentials → OAuth client ID → Desktop app → tải JSON.\r\n" +
             "5. Dán JSON vào ô trên, bấm Ủy quyền kênh này, đăng nhập đúng chủ kênh.\r\n" +
+            "   Có 10 phút. Hết giờ hoặc đóng nhầm trình duyệt thì bấm Ủy quyền lại.\r\n" +
             "   Nếu Google báo ứng dụng chưa xác minh, chọn Advanced rồi tiếp tục. Đây là app OAuth do bạn tạo.\r\n" +
             "6. JSON có refresh_token có thể copy sang máy khác.\r\n\r\n" +
             "App xin scope youtube.upload và youtube.force-ssl. Scope thứ hai dùng để gắn thumbnail, đưa vào playlist và sửa metadata.\r\n" +
@@ -354,8 +441,8 @@ public sealed partial class MainForm : Form
     {
         var page = new TabPage("Nguồn video");
         var stack = new FormStack();
-        stack.AddLabel("Mỗi kênh tự chọn nguồn. Thư mục gốc kiểu D:\\HD036 sẽ tự tìm xuat (video) và thumb (ảnh). Video 001 ..._khung_01.mp4 ghép với ảnh 001 ....jpg. Tên trên YouTube là tên ảnh, bỏ số 001 ở đầu.");
-        lstSources = stack.Add(new ListBox { IntegralHeight = false }, 160);
+        stack.AddLabel("Chọn thư mục gốc. Video có ảnh cùng số mới được đăng. Bấm Đưa video vào hàng đợi, rồi sang tab Hàng đợi bấm Đăng video đã chọn.");
+        lstSources = stack.Add(new ListBox { IntegralHeight = false }, 72);
         lstSources.AllowDrop = true;
         lstSources.SelectedIndexChanged += SourceSelected;
         lstSources.DragEnter += (_, args) =>
@@ -370,10 +457,15 @@ public sealed partial class MainForm : Form
             foreach (var path in paths.Where(Directory.Exists))
                 AddRoot(path);
         };
-        var row = new FlowLayoutPanel { Height = 40, WrapContents = false };
+        var row = new FlowLayoutPanel { Height = 72, WrapContents = true };
         row.Controls.Add(MakeButton("Thêm thư mục gốc", AddSourceFromDialog));
         row.Controls.Add(MakeButton("Xóa nguồn", RemoveSource));
+        var loadQueue = MakeButton("Đưa video vào hàng đợi", LoadSelectedSourceIntoQueue);
+        loadQueue.Tag = "accent";
+        row.Controls.Add(loadQueue);
         stack.Add(row, 40);
+        lblSourcePreview = stack.AddLabel("Chưa có video.");
+        lstPreview = stack.Add(new ListBox { IntegralHeight = false }, 200);
         stack.AddLabel("Tên nguồn");
         txtSourceName = stack.Add(new TextBox(), 28);
         txtSourceName.TextChanged += OnEdited;
@@ -387,7 +479,11 @@ public sealed partial class MainForm : Form
         txtThumbFolder.TextChanged += OnEdited;
         stack.Add(MakeButton("Chọn thư mục thumb", () => BrowseInto(txtThumbFolder)), 34);
         chkSourceEnabled = stack.Add(new CheckBox { Text = "Dùng nguồn này khi quét", Checked = true }, 28);
-        chkSourceEnabled.CheckedChanged += OnEdited;
+        chkSourceEnabled.CheckedChanged += (_, _) =>
+        {
+            if (!Loading)
+                WriteSelectedSource();
+        };
         stack.AddLabel("Chỉ đăng từ số này trở đi. 0 là tất cả. Số nhỏ hơn bị bỏ, không chiếm giờ đăng. Video đã có trong lịch sử vẫn bị bỏ dù số lớn hơn.");
         numSourceStart = stack.Add(new NumericUpDown { Minimum = 0, Maximum = 9999 }, 28);
         numSourceStart.ValueChanged += OnEdited;
@@ -400,13 +496,46 @@ public sealed partial class MainForm : Form
     {
         var page = new TabPage("Tùy chọn đăng");
         var stack = new FormStack();
-        stack.AddLabel("Các mục dưới đây lưu riêng cho kênh đang chọn. Kênh mới được copy tùy chọn từ kênh hiện tại, không copy nguồn hay token.");
+        stack.AddLabel("Mẫu dùng chung. Đổi giờ rồi bấm Lưu hoặc Ctrl+S thì sửa đúng mẫu đang chọn, mọi kênh dùng mẫu đó đổi theo. Muốn bộ giờ khác: bấm Thêm mẫu trước, rồi mới đổi giờ.");
+        cboTemplate = stack.Add(new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList }, 28);
+        cboTemplate.SelectedIndexChanged += (_, _) => ApplySelectedTemplate();
+        stack.AddLabel("Tên mẫu. Gõ tên riêng thì đổi giờ không đổi tên.");
+        txtTemplateName = stack.Add(new TextBox(), 28);
+        txtTemplateName.Leave += (_, _) => RenameTemplate();
+        var templateRow = new FlowLayoutPanel { Height = 72, WrapContents = true };
+        templateRow.Controls.Add(MakeButton("Thêm mẫu", AddTemplate));
+        templateRow.Controls.Add(MakeButton("Xóa mẫu", DeleteTemplate));
+        templateRow.Controls.Add(MakeButton("Dùng mẫu này", ApplySelectedTemplate));
+        stack.Add(templateRow, 72);
+        lblTemplateHint = stack.AddLabel("Chưa có mẫu.");
         stack.AddLabel("Số video công khai mỗi ngày");
         numPerDay = stack.Add(new NumericUpDown { Minimum = 1, Maximum = 50, Value = 3 }, 28);
-        numPerDay.ValueChanged += OnEdited;
-        stack.AddLabel("Giờ công khai, mỗi dòng một giờ. App lấy đủ số video/ngày, ưu tiên giờ sớm. Thiếu giờ thì tự cách thêm theo khoảng của hai giờ cuối.");
+        numPerDay.ValueChanged += (sender, e) =>
+        {
+            OnEdited(sender, e);
+            RefreshQueueFromSettings();
+        };
+        stack.AddLabel("Giờ công khai, mỗi dòng một giờ. Bật ô dưới thì mỗi ngày chỉ dùng đúng các giờ này, không tự thêm giờ.");
         txtTimes = stack.Add(new TextBox { Multiline = true, ScrollBars = ScrollBars.Vertical, AcceptsReturn = true }, 80);
         txtTimes.TextChanged += OnEdited;
+        txtTimes.Leave += (_, _) => RefreshQueueFromSettings();
+        chkExactDays = stack.Add(new CheckBox { Text = "Lên lịch trước 1 ngày, đúng các giờ này. App còn mở thì tự đăng ngày tiếp theo. Thiếu video cho một ngày thì dừng và tên kênh báo đỏ.", Checked = true }, 52);
+        chkExactDays.CheckedChanged += (_, _) =>
+        {
+            if (Loading || _current == null)
+                return;
+            _current.Options.ExactDailyTimes = chkExactDays.Checked;
+            if (!chkExactDays.Checked)
+                StopAuto();
+            RefreshQueueFromSettings();
+        };
+        chkDeleteAfter = stack.Add(new CheckBox { Text = "Sau khi đăng thành công, xóa vĩnh viễn cả video và thumbnail. Không đưa vào thùng rác.", Checked = false }, 36);
+        chkDeleteAfter.CheckedChanged += (_, _) =>
+        {
+            if (Loading || _current == null)
+                return;
+            _current.Options.DeleteSourceAfterUpload = chkDeleteAfter.Checked;
+        };
         stack.AddLabel("Ngày bắt đầu xếp lịch");
         dtpStart = stack.Add(new DateTimePicker { Format = DateTimePickerFormat.Short }, 28);
         dtpStart.MinDate = DateTime.Today.AddDays(-1);
@@ -506,16 +635,11 @@ public sealed partial class MainForm : Form
         if (Loading || lstChannels.SelectedItem is not ChannelProfile selected || ReferenceEquals(_current, selected))
             return;
         WriteCurrent();
+        SaveCurrentTemplate(announce: false);
+        _store.Save(_data);
         _current = selected;
         LoadCurrent();
-    }
-
-    void ChannelItemCheck(object? sender, ItemCheckEventArgs e)
-    {
-        if (Loading)
-            return;
-        if (lstChannels.Items[e.Index] is ChannelProfile channel)
-            channel.Enabled = e.NewValue == CheckState.Checked;
+        ShowChannelQueue();
     }
 
     void SourceSelected(object? sender, EventArgs e)
@@ -532,7 +656,7 @@ public sealed partial class MainForm : Form
         BeginLoad();
         lstChannels.Items.Clear();
         foreach (var channel in _data.Channels)
-            lstChannels.Items.Add(channel, channel.Enabled);
+            lstChannels.Items.Add(channel);
         var index = _data.Channels.FindIndex(channel => channel.Id == selectId);
         if (index < 0 && _data.Channels.Count > 0)
             index = 0;
@@ -543,6 +667,34 @@ public sealed partial class MainForm : Form
         LoadCurrent();
     }
 
+    void ApplyListName(bool save)
+    {
+        if (Loading || _current == null || IsBusy(_current))
+            return;
+        var name = txtListName.Text.Trim();
+        if (name.Length == 0)
+        {
+            BeginLoad();
+            txtListName.Text = _current.Name;
+            EndLoad();
+            _listNameDirty = false;
+            MessageBox.Show(this, "Tên kênh không được để trống.", "Đổi tên");
+            return;
+        }
+
+        _current.Name = name;
+        BeginLoad();
+        txtChannelName.Text = name;
+        txtListName.Text = name;
+        EndLoad();
+        _listNameDirty = false;
+        UpdateChannelListText();
+        if (!save)
+            return;
+        _store.Save(_data);
+        Log($"Đã lưu tên kênh: {name}");
+    }
+
     void UpdateChannelListText()
     {
         if (_current == null)
@@ -551,7 +703,7 @@ public sealed partial class MainForm : Form
         BeginLoad();
         lstChannels.Items.Clear();
         foreach (var channel in _data.Channels)
-            lstChannels.Items.Add(channel, channel.Enabled);
+            lstChannels.Items.Add(channel);
         var index = _data.Channels.FindIndex(channel => channel.Id == selectedId);
         if (index >= 0)
             lstChannels.SelectedIndex = index;
@@ -563,32 +715,95 @@ public sealed partial class MainForm : Form
         BeginLoad();
         var has = _current != null;
         txtChannelName.Enabled = has;
+        txtListName.Enabled = has;
         txtCredential.Enabled = has;
         btnAuthorize.Enabled = has;
+        btnReauthorize.Enabled = has;
         btnTest.Enabled = has;
         if (!has)
         {
             txtChannelName.Text = "";
+            txtListName.Text = "";
             txtCredential.Text = "";
             lblAuth.Text = "Hãy thêm một kênh.";
             lstSources.Items.Clear();
+            cboTemplate.Items.Clear();
+            txtTemplateName.Text = "";
+            lblTemplateHint.Text = "Hãy chọn một kênh.";
             EndLoad();
             return;
         }
 
         txtChannelName.Text = _current!.Name;
+        txtListName.Text = _current.Name;
+        _listNameDirty = false;
         txtCredential.Text = _current.CredentialText;
         ReadOptions(_current);
+        BindTemplates();
         EndLoad();
         LoadSourceList();
         UpdateAuthLabel();
+        ApplyEditorLock();
+    }
+
+    bool IsBusy(ChannelProfile? channel) => channel != null && _busyChannelIds.Contains(channel.Id);
+
+    void ApplyEditorLock()
+    {
+        var locked = IsBusy(_current);
+        if (_tabs != null)
+        {
+            foreach (TabPage page in _tabs.TabPages)
+            {
+                if (page.Text is "Kênh và cấp quyền" or "Nguồn video" or "Tùy chọn đăng")
+                    SetInputsEnabled(page, _current != null && !locked);
+            }
+        }
+
+        if (txtListName != null)
+            txtListName.ReadOnly = locked;
+        if (btnRenameChannel != null)
+            btnRenameChannel.Enabled = _current != null && !locked;
+        if (grid != null)
+            grid.ReadOnly = locked;
+        if (btnRemoveChannel != null)
+            btnRemoveChannel.Enabled = _current != null && !locked;
+        if (btnScanOne != null)
+            btnScanOne.Enabled = _current != null && !locked;
+        if (btnClearQueue != null)
+            btnClearQueue.Enabled = _current != null && !locked;
+        if (!_uploading)
+        {
+            if (btnUpload != null)
+                btnUpload.Enabled = true;
+            if (btnScanAll != null)
+                btnScanAll.Enabled = true;
+            if (btnRetryThumbs != null)
+                btnRetryThumbs.Enabled = true;
+            if (btnAddChannel != null)
+                btnAddChannel.Enabled = true;
+        }
+    }
+
+    static void SetInputsEnabled(Control root, bool enabled)
+    {
+        foreach (Control child in root.Controls)
+        {
+            if (child is TextBox or ComboBox or NumericUpDown or CheckBox or DateTimePicker or Button or LinkLabel)
+                child.Enabled = enabled;
+            else
+                SetInputsEnabled(child, enabled);
+        }
     }
 
     void WriteCurrent()
     {
         if (Loading || _current == null)
             return;
-        _current.Name = txtChannelName.Text.Trim();
+        if (_listNameDirty)
+            ApplyListName(save: false);
+        else
+            _current.Name = txtChannelName.Text.Trim();
         _current.CredentialText = txtCredential.Text;
         ApplyCredential(_current, txtCredential.Text);
         WriteOptions();
@@ -630,7 +845,7 @@ public sealed partial class MainForm : Form
         if (string.IsNullOrWhiteSpace(_current.ClientId))
             lblAuth.Text = "Chưa đọc được client_id.";
         else if (string.IsNullOrWhiteSpace(_current.RefreshToken))
-            lblAuth.Text = "Đã có client. Bấm Ủy quyền kênh này và đăng nhập đúng chủ kênh.";
+            lblAuth.Text = "Đã có client. Bấm Ủy quyền kênh này. Nếu hết giờ, bấm Ủy quyền lại.";
         else if (!string.IsNullOrWhiteSpace(_current.YoutubeChannelTitle))
             lblAuth.Text = $"Sẵn sàng: {_current.YoutubeChannelTitle} ({_current.YoutubeChannelId})";
         else
@@ -642,6 +857,8 @@ public sealed partial class MainForm : Form
         var options = channel.Options;
         numPerDay.Value = Math.Clamp(options.VideosPerDay, (int)numPerDay.Minimum, (int)numPerDay.Maximum);
         txtTimes.Text = options.TimeSlotsText;
+        ApplyCheck(chkExactDays, true, options.ExactDailyTimes);
+        ApplyCheck(chkDeleteAfter, true, options.DeleteSourceAfterUpload);
         var start = options.ScheduleStartDate.ToDateTime(TimeOnly.MinValue);
         if (start < dtpStart.MinDate)
             start = dtpStart.MinDate;
@@ -711,6 +928,132 @@ public sealed partial class MainForm : Form
         options.RecordingDate = DateOnly.FromDateTime(dtpRecording.Value);
         options.License = SelectedCode(cboLicense, "youtube");
         options.PlaylistId = txtPlaylist.Text.Trim();
+        UpdateTemplateHint();
+    }
+
+    void BindTemplates()
+    {
+        BeginLoad();
+        cboTemplate.Items.Clear();
+        foreach (var template in _data.Templates)
+            cboTemplate.Items.Add(template);
+        UploadTemplate? selected = null;
+        if (_current != null)
+        {
+            selected = _data.Templates.FirstOrDefault(template => template.Id == _current.TemplateId)
+                ?? _data.Templates.FirstOrDefault(template => template.Key == UploadTemplates.KeyOf(_current.Options));
+            if (selected != null)
+                _current.TemplateId = selected.Id;
+        }
+
+        cboTemplate.SelectedItem = selected;
+        txtTemplateName.Text = selected?.Name ?? "";
+        EndLoad();
+        UpdateTemplateHint();
+    }
+
+    void UpdateTemplateHint()
+    {
+        if (lblTemplateHint == null)
+            return;
+        if (_current == null)
+        {
+            lblTemplateHint.Text = "Hãy chọn một kênh.";
+            return;
+        }
+
+        var match = _data.Templates.FirstOrDefault(template => template.Key == UploadTemplates.KeyOf(_current.Options));
+        if (match == null)
+        {
+            var linked = _data.Templates.FirstOrDefault(template => template.Id == _current.TemplateId);
+            lblTemplateHint.Text = linked == null
+                ? "Kênh này chưa gắn mẫu. Chọn một mẫu rồi bấm Dùng mẫu này."
+                : "Bên dưới đang khác mẫu đang chọn. Bấm Dùng mẫu này để đổ số video, giờ và các mục còn lại.";
+            return;
+        }
+
+        lblTemplateHint.Text = $"Bên dưới đang khớp mẫu \"{match.Name}\".";
+    }
+
+    void AddTemplate()
+    {
+        if (_current == null)
+            return;
+        WriteCurrent();
+        var created = UploadTemplates.AddCopy(_data, _current);
+        _store.Save(_data);
+        BindTemplates();
+        Log($"Đã thêm mẫu \"{created.Name}\" cho {_current.Name}. Mẫu cũ giữ nguyên. Đổi giờ rồi lưu thì chỉ mẫu mới đổi.");
+    }
+
+    void DeleteTemplate()
+    {
+        if (cboTemplate.SelectedItem is not UploadTemplate selected)
+            return;
+        if (_data.Templates.Count <= 1)
+        {
+            MessageBox.Show(this, "Còn một mẫu. Hãy thêm mẫu khác trước khi xóa mẫu này.", "Xóa mẫu");
+            return;
+        }
+
+        var users = _data.Channels.Count(channel => channel.TemplateId == selected.Id);
+        if (MessageBox.Show(this, $"Xóa mẫu \"{selected.Name}\"? {users} kênh đang dùng sẽ bỏ liên kết mẫu này.", "Xóa mẫu", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+            return;
+
+        _data.Templates.Remove(selected);
+        foreach (var channel in _data.Channels)
+        {
+            if (channel.TemplateId == selected.Id)
+                channel.TemplateId = "";
+        }
+
+        _store.Save(_data);
+        BindTemplates();
+        Log($"Đã xóa mẫu \"{selected.Name}\".");
+    }
+
+    void RenameTemplate()
+    {
+        if (Loading || _current == null || cboTemplate.SelectedItem is not UploadTemplate selected)
+            return;
+        var name = txtTemplateName.Text.Trim();
+        if (name.Length == 0 || name == selected.Name)
+            return;
+        selected.Name = name;
+        selected.NameIsCustom = true;
+        _store.Save(_data);
+        BindTemplates();
+        Log($"Đã đổi tên mẫu thành \"{name}\".");
+    }
+
+    void ApplySelectedTemplate()
+    {
+        if (Loading || _current == null || cboTemplate.SelectedItem is not UploadTemplate template)
+            return;
+
+        UploadTemplates.Apply(_current, template);
+        BeginLoad();
+        ReadOptions(_current);
+        EndLoad();
+        _store.Save(_data);
+        RefreshQueueFromSettings();
+        var times = template.Options.TimeSlotsText
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        Log($"Đã áp mẫu \"{template.Name}\" cho {_current.Name}: {template.Options.VideosPerDay} video/ngày, giờ {string.Join(", ", times)}.");
+    }
+
+    void SaveCurrentTemplate(bool announce)
+    {
+        if (_current == null)
+            return;
+        var template = _data.Templates.FirstOrDefault(item => item.Id == _current.TemplateId);
+        if (template == null)
+            return;
+        var before = template.Key;
+        UploadTemplates.SaveInto(_data, _current, channel => _busyChannelIds.Contains(channel.Id));
+        BindTemplates();
+        if (announce && before != template.Key)
+            Log($"Đã cập nhật mẫu \"{template.Name}\". Mọi kênh đang dùng mẫu này đổi theo.");
     }
 
     void BindCategories()
@@ -766,11 +1109,88 @@ public sealed partial class MainForm : Form
         txtSourceName.Text = source?.Name ?? "";
         txtVideoFolder.Text = source?.VideoFolder ?? "";
         txtThumbFolder.Text = source?.ThumbFolder ?? "";
-        chkSourceEnabled.Checked = source?.Enabled ?? false;
+        ApplyCheck(chkSourceEnabled, has, source?.Enabled == true);
         numSourceStart.Value = Math.Clamp(source?.StartIndex ?? 0, (int)numSourceStart.Minimum, (int)numSourceStart.Maximum);
         if (numFrom != null)
             numFrom.Value = numSourceStart.Value;
         EndLoad();
+        RefreshPreview();
+    }
+
+    void ApplyCheck(CheckBox box, bool canUse, bool isChecked)
+    {
+        box.Enabled = true;
+        box.Checked = isChecked;
+        box.Enabled = canUse;
+        if (!box.IsHandleCreated || box.Checked == isChecked)
+            return;
+
+        BeginInvoke(() =>
+        {
+            BeginLoad();
+            box.Enabled = true;
+            box.Checked = isChecked;
+            box.Enabled = canUse;
+            EndLoad();
+        });
+    }
+
+    void LoadSelectedSourceIntoQueue()
+    {
+        if (CurrentSource() == null)
+        {
+            MessageBox.Show(this, "Hãy chọn một nguồn trước.", "Hàng đợi");
+            return;
+        }
+
+        BeginLoad();
+        ApplyCheck(chkSourceEnabled, true, true);
+        EndLoad();
+        WriteSelectedSource();
+        CurrentSource()!.Enabled = true;
+        _store.Save(_data);
+        Scan(SelectedChannelsOnly: true);
+        _tabs.SelectedIndex = 0;
+    }
+
+    void RefreshPreview()
+    {
+        if (lstPreview == null || lblSourcePreview == null)
+            return;
+
+        lstPreview.Items.Clear();
+        var source = CurrentSource();
+        if (source == null || string.IsNullOrWhiteSpace(source.VideoFolder))
+        {
+            lblSourcePreview.Text = "Chưa có thư mục video.";
+            return;
+        }
+
+        var scan = FolderScanner.Scan(source);
+        var ready = 0;
+        var missing = 0;
+        foreach (var video in scan.Videos)
+        {
+            if (video.MissingThumb)
+            {
+                missing++;
+                continue;
+            }
+
+            if (FileNames.IsBeforeStart(video.Index, source.StartIndex))
+                continue;
+
+            var uploaded = _history.FindExact(_current!.Id, video.VideoPath, video.FileSize) != null;
+            lstPreview.Items.Add(uploaded
+                ? $"{video.Index}  {video.Title}  — đã đăng"
+                : $"{video.Index}  {video.Title}");
+            if (!uploaded)
+                ready++;
+        }
+
+        lblSourcePreview.Text = scan.Videos.Count == 0
+            ? $"Không thấy video trong {source.VideoFolder}."
+            : $"{ready} video có ảnh, sẵn sàng đăng. {missing} video thiếu ảnh, không đưa vào hàng.";
     }
 
     void WriteSelectedSource()
@@ -814,6 +1234,7 @@ public sealed partial class MainForm : Form
         var channel = new ChannelProfile
         {
             Name = "Kênh " + (_data.Channels.Count + 1),
+            TemplateId = _current?.TemplateId ?? "",
             Options = _current?.Options.Clone() ?? UploadOptions.CreateDefault()
         };
         _data.Channels.Add(channel);
@@ -852,10 +1273,12 @@ public sealed partial class MainForm : Form
         WriteSelectedSource();
         var source = new VideoSource { Name = new DirectoryInfo(root).Name };
         FolderScanner.ApplyRoot(source, root);
+        source.Enabled = true;
         _current.Sources.Add(source);
         LoadSourceList();
         lstSources.SelectedIndex = _current.Sources.Count - 1;
-        Log($"{_current.Name}: thêm nguồn {source.Name}. Video: {source.VideoFolder}. Thumb: {source.ThumbFolder}");
+        Log($"{_current.Name}: thêm nguồn {source.Name}. Video: {source.VideoFolder}. Thumb: {source.ThumbFolder}. Bấm Đưa video vào hàng đợi.");
+        RefreshPreview();
     }
 
     void RemoveSource()
@@ -874,6 +1297,7 @@ public sealed partial class MainForm : Form
             return;
         target.Text = path;
         WriteSelectedSource();
+        RefreshPreview();
     }
 
     string? PickFolder(string description)
@@ -897,41 +1321,77 @@ public sealed partial class MainForm : Form
             return;
         }
 
-        await RunChannelAction(async () =>
+        _authCts?.Cancel();
+        var cts = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+        _authCts = cts;
+        var generation = ++_authGeneration;
+        var channel = _current;
+
+        try
         {
-            Log("Mở trình duyệt để ủy quyền. Đăng nhập đúng tài khoản của kênh này.");
-            var credential = await YouTubeAuth.AuthorizeInteractiveAsync(_current.ClientId, _current.ClientSecret, CancellationToken.None);
+            btnAuthorize.Enabled = false;
+            Log("Mở trình duyệt để ủy quyền. Có 10 phút để đăng nhập đúng tài khoản kênh này. Hết giờ thì bấm Ủy quyền lại.");
+            var credential = await YouTubeAuth.AuthorizeInteractiveAsync(channel.ClientId, channel.ClientSecret, cts.Token);
+            if (generation != _authGeneration || !ReferenceEquals(_current, channel))
+                return;
+
             var refresh = credential.Token.RefreshToken;
             if (string.IsNullOrWhiteSpace(refresh))
-                throw new InvalidOperationException("Google không trả refresh token. Hãy gỡ app tại myaccount.google.com/permissions rồi ủy quyền lại.");
+                throw new InvalidOperationException("Google không trả refresh token. Hãy gỡ app tại myaccount.google.com/permissions rồi bấm Ủy quyền lại.");
 
-            _current.RefreshToken = refresh;
-            using var service = YouTubeAuth.CreateService(_current);
+            channel.RefreshToken = refresh;
+            using var service = YouTubeAuth.CreateService(channel);
             var identity = await YouTubeAuth.GetMyChannelAsync(service, CancellationToken.None);
-            _current.YoutubeChannelId = identity.Id;
-            _current.YoutubeChannelTitle = identity.Title;
-            if (string.IsNullOrWhiteSpace(_current.Name) || _current.Name.StartsWith("Kênh ", StringComparison.Ordinal))
+            channel.YoutubeChannelId = identity.Id;
+            channel.YoutubeChannelTitle = identity.Title;
+            if (string.IsNullOrWhiteSpace(channel.Name) || channel.Name.StartsWith("Kênh ", StringComparison.Ordinal))
             {
-                _current.Name = identity.Title;
+                channel.Name = identity.Title;
                 txtChannelName.Text = identity.Title;
             }
 
             var parsed = new ParsedCredential
             {
-                ClientId = _current.ClientId,
-                ClientSecret = _current.ClientSecret,
+                ClientId = channel.ClientId,
+                ClientSecret = channel.ClientSecret,
                 RefreshToken = refresh,
                 ChannelId = identity.Id,
                 ChannelTitle = identity.Title
             };
             txtCredential.Text = CredentialParser.ToPortableJson(parsed, identity.Id, identity.Title);
-            _current.CredentialText = txtCredential.Text;
+            channel.CredentialText = txtCredential.Text;
             await RememberCategoriesAsync(service);
             UpdateChannelListText();
             UpdateAuthLabel();
             _store.Save(_data);
-            Log($"Đã ủy quyền {_current.YoutubeChannelTitle} ({_current.YoutubeChannelId}).");
-        });
+            Log($"Đã ủy quyền {channel.YoutubeChannelTitle} ({channel.YoutubeChannelId}).");
+        }
+        catch (Exception) when (generation != _authGeneration)
+        {
+            Log("Đã hủy lần ủy quyền trước để mở lại.");
+        }
+        catch (OperationCanceledException)
+        {
+            Log("Hết 10 phút mà chưa đăng nhập xong. Bấm Ủy quyền lại để mở trình duyệt lần nữa.");
+            MessageBox.Show(this, "Hết thời gian ủy quyền. Bấm Ủy quyền lại, rồi đăng nhập trong vòng 10 phút.", "Ủy quyền");
+        }
+        catch (Exception ex)
+        {
+            var message = ApiErrors.Explain(ex);
+            Log(message);
+            MessageBox.Show(this, message + "\n\nBấm Ủy quyền lại để thử lần nữa.", "Ủy quyền");
+        }
+        finally
+        {
+            if (generation == _authGeneration)
+            {
+                btnAuthorize.Enabled = _current != null;
+                btnReauthorize.Enabled = _current != null;
+                cts.Dispose();
+                if (ReferenceEquals(_authCts, cts))
+                    _authCts = null;
+            }
+        }
     }
 
     async Task TestConnectionAsync()
@@ -1005,6 +1465,7 @@ public sealed partial class MainForm : Form
     {
         WriteCurrent();
         _data.MaxUploadsPerRun = (int)numBatch.Value;
+        SaveCurrentTemplate(announce: true);
         _store.Save(_data);
         Log("Đã lưu cấu hình.");
     }

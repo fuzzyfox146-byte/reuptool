@@ -5,7 +5,9 @@ namespace YtFolderUploader;
 public sealed class AppData
 {
     public int MaxUploadsPerRun { get; set; } = 10;
+    public int SettingsRevision { get; set; }
     public List<ChannelProfile> Channels { get; set; } = new();
+    public List<UploadTemplate> Templates { get; set; } = new();
 }
 
 public sealed class ChannelProfile
@@ -20,7 +22,20 @@ public sealed class ChannelProfile
     public string YoutubeChannelId { get; set; } = "";
     public string YoutubeChannelTitle { get; set; } = "";
     public List<VideoSource> Sources { get; set; } = new();
+    public string TemplateId { get; set; } = "";
     public UploadOptions Options { get; set; } = UploadOptions.CreateDefault();
+
+    [JsonIgnore]
+    public bool ShortSource { get; set; }
+
+    [JsonIgnore]
+    public bool DayAlreadySet { get; set; }
+
+    [JsonIgnore]
+    public DateOnly? PlannedDay { get; set; }
+
+    [JsonIgnore]
+    public string? ScheduleNote { get; set; }
 
     public override string ToString()
     {
@@ -41,6 +56,17 @@ public sealed class VideoSource
     public int StartIndex { get; set; }
 
     public override string ToString() => string.IsNullOrWhiteSpace(Name) ? VideoFolder : Name;
+}
+
+public sealed class UploadTemplate
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string Name { get; set; } = "";
+    public bool NameIsCustom { get; set; }
+    public string Key { get; set; } = "";
+    public UploadOptions Options { get; set; } = UploadOptions.CreateDefault();
+
+    public override string ToString() => string.IsNullOrWhiteSpace(Name) ? "(mẫu chưa đặt tên)" : Name;
 }
 
 public sealed class UploadOptions
@@ -72,6 +98,8 @@ public sealed class UploadOptions
     public bool AutoLevels { get; set; }
     public bool Stabilize { get; set; }
     public string PlaylistId { get; set; } = "";
+    public bool ExactDailyTimes { get; set; } = true;
+    public bool DeleteSourceAfterUpload { get; set; }
 
     [JsonIgnore]
     public bool IsScheduled => string.IsNullOrWhiteSpace(PrivacyMode) || PrivacyMode == "scheduled";
@@ -192,6 +220,9 @@ public sealed class SchedulePlan
 {
     public List<DateTimeOffset> Times { get; } = new();
     public string? Warning { get; set; }
+    public bool ShortSource { get; set; }
+    public bool DayAlreadySet { get; set; }
+    public DateOnly? TargetDay { get; set; }
 }
 
 public sealed class ParsedCredential

@@ -13,17 +13,20 @@ public static class SchedulePlanner
         DateTimeOffset now)
     {
         var plan = new SchedulePlan();
+        var zone = TimeZones.Resolve(options.TimeZoneId);
+        if (options.ExactDailyTimes)
+            return PlanOneDayAhead(count, options, used, now, zone);
+
         if (count <= 0)
             return plan;
 
-        var zone = TimeZones.Resolve(options.TimeZoneId);
         var slots = ResolveSlots(options.TimeSlotsText, options.VideosPerDay, out var warning);
         plan.Warning = warning;
 
         var usedKeys = new HashSet<long>(used.Select(Key));
         var localNow = TimeZoneInfo.ConvertTime(now, zone);
-        var today = DateOnly.FromDateTime(localNow.DateTime);
-        var date = options.ScheduleStartDate < today ? today : options.ScheduleStartDate;
+        var tomorrow = DateOnly.FromDateTime(localNow.DateTime).AddDays(1);
+        var date = options.ScheduleStartDate > tomorrow ? options.ScheduleStartDate : tomorrow;
 
         var guard = 0;
         while (plan.Times.Count < count && guard++ < 4000)
@@ -51,6 +54,72 @@ public static class SchedulePlanner
         if (plan.Times.Count < count)
             plan.Warning = "Không xếp đủ giờ hẹn trong 4000 ngày. Hãy kiểm tra danh sách giờ.";
 
+        return plan;
+    }
+
+    public static DateOnly TargetDay(UploadOptions options, DateTimeOffset now)
+    {
+        var zone = TimeZones.Resolve(options.TimeZoneId);
+        var localNow = TimeZoneInfo.ConvertTime(now, zone);
+        var tomorrow = DateOnly.FromDateTime(localNow.DateTime).AddDays(1);
+        return options.ScheduleStartDate > tomorrow ? options.ScheduleStartDate : tomorrow;
+    }
+
+    public static SchedulePlan PlanOneDayAhead(
+        int count,
+        UploadOptions options,
+        IEnumerable<DateTimeOffset> used,
+        DateTimeOffset now,
+        TimeZoneInfo? zone = null)
+    {
+        var plan = new SchedulePlan();
+        zone ??= TimeZones.Resolve(options.TimeZoneId);
+        var slots = Parse(options.TimeSlotsText).Distinct().OrderBy(slot => slot).ToList();
+        var day = TargetDay(options, now);
+        plan.TargetDay = day;
+        if (slots.Count == 0)
+        {
+            plan.ShortSource = count > 0;
+            plan.Warning = "Chưa có giờ đăng. Không tự thêm giờ.";
+            return plan;
+        }
+
+        var daySize = Math.Clamp(options.VideosPerDay, 1, slots.Count);
+        var daySlots = slots.Take(daySize).ToList();
+        if (options.VideosPerDay > slots.Count)
+            plan.Warning = $"Đã nhập {slots.Count} giờ, nên một ngày đăng {slots.Count} video.";
+
+        if (count < daySlots.Count)
+        {
+            plan.ShortSource = true;
+            plan.Warning = $"Ngày {day:dd/MM} cần {daySlots.Count} video, chỉ còn {count}. Không đăng ngày thiếu.";
+            return plan;
+        }
+
+        var usedKeys = new HashSet<long>(used.Select(Key));
+        var times = new List<DateTimeOffset>();
+        foreach (var slot in daySlots)
+        {
+            var local = day.ToDateTime(slot);
+            var when = new DateTimeOffset(local, zone.GetUtcOffset(local));
+            if (usedKeys.Contains(Key(when)))
+            {
+                plan.DayAlreadySet = true;
+                plan.Times.Clear();
+                plan.Warning = $"Ngày {day:dd/MM} đã có lịch. Không đăng thêm.";
+                return plan;
+            }
+
+            if (when < now + MinimumLead)
+            {
+                plan.Warning = $"Giờ {slot:HH:mm} ngày {day:dd/MM} đã quá gần. Không đăng ngày này.";
+                return plan;
+            }
+
+            times.Add(when);
+        }
+
+        plan.Times.AddRange(times);
         return plan;
     }
 

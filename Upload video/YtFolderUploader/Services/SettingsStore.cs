@@ -32,7 +32,30 @@ public sealed class SettingsStore
     {
         var data = Read<AppData>(SettingsPath, "cấu hình");
         Normalize(data);
+        var changed = EnableSavedSources(data);
+        changed |= UploadTemplates.RepairNamedSchedules(data);
+        changed |= UploadTemplates.SeedOnce(data);
+        if (changed)
+            Save(data);
         return data;
+    }
+
+    public static bool EnableSavedSources(AppData data)
+    {
+        if (data.SettingsRevision >= 1)
+            return false;
+
+        foreach (var channel in data.Channels)
+        {
+            foreach (var source in channel.Sources)
+            {
+                if (!string.IsNullOrWhiteSpace(source.VideoFolder))
+                    source.Enabled = true;
+            }
+        }
+
+        data.SettingsRevision = 1;
+        return true;
     }
 
     public UploadHistory LoadHistory()
@@ -57,13 +80,24 @@ public sealed class SettingsStore
     public static void Normalize(AppData data)
     {
         data.Channels ??= new();
+        data.Templates ??= new();
         if (data.MaxUploadsPerRun < 0)
             data.MaxUploadsPerRun = 0;
+
+        foreach (var template in data.Templates)
+        {
+            if (string.IsNullOrWhiteSpace(template.Id))
+                template.Id = Guid.NewGuid().ToString("N");
+            template.Options ??= UploadOptions.CreateDefault();
+            template.Options.Categories ??= new();
+            template.Key = UploadTemplates.KeyOf(template.Options);
+        }
 
         foreach (var channel in data.Channels)
         {
             if (string.IsNullOrWhiteSpace(channel.Id))
                 channel.Id = Guid.NewGuid().ToString("N");
+            channel.Enabled = true;
             channel.Sources ??= new();
             channel.Options ??= UploadOptions.CreateDefault();
             channel.Options.Categories ??= new();

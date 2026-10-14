@@ -10,14 +10,28 @@ public sealed partial class MainForm
 
         var channels = SelectedChannelsOnly
             ? (_current == null ? [] : new[] { _current })
-            : _data.Channels.Where(channel => channel.Enabled).ToArray();
+            : _data.Channels.Where(channel => channel.Enabled && (!_autoTickRunning || _autoArmed.Contains(channel.Id))).ToArray();
         if (channels.Length == 0)
         {
+            if (_autoTickRunning)
+                return;
             MessageBox.Show(this, "Chưa có kênh nào được bật.", "Quét");
             return;
         }
 
-        _items.Clear();
+        if (_uploading || _autoTickRunning)
+        {
+            channels = channels.Where(channel => !IsBusy(channel)).ToArray();
+            if (channels.Length == 0)
+                return;
+            var drop = channels.Select(channel => channel.Id).ToHashSet();
+            _items.RemoveAll(item => drop.Contains(item.Channel.Id));
+        }
+        else
+        {
+            _items.Clear();
+        }
+
         grid.Rows.Clear();
         var pendingCount = 0;
         var uploadedCount = 0;
@@ -58,26 +72,23 @@ public sealed partial class MainForm
                         item.Status = string.IsNullOrWhiteSpace(exact.Status) ? "Đã đăng" : exact.Status;
                         uploadedCount++;
                     }
+                    else if (video.MissingThumb)
+                    {
+                        missingThumb++;
+                        continue;
+                    }
                     else if (FileNames.IsBeforeStart(video.Index, source.StartIndex))
                     {
-                        item.Selected = false;
-                        item.Status = $"Bỏ qua, trước số {source.StartIndex}";
                         skippedBefore++;
+                        continue;
                     }
                     else
                     {
                         var previous = _history.FindPath(channel.Id, video.VideoPath);
-                        item.Selected = true;
-                        if (previous != null)
-                            item.Status = "File đã đổi so với " + previous.YoutubeVideoId;
-                        else if (video.MissingThumb)
-                            item.Status = video.TitleTrimmed ? "Thiếu thumbnail, tiêu đề đã cắt" : "Thiếu thumbnail";
-                        else if (video.TitleTrimmed)
-                            item.Status = "Sẵn sàng, tiêu đề đã cắt còn 100 ký tự";
-                        else
-                            item.Status = "Sẵn sàng";
-                        if (video.MissingThumb)
-                            missingThumb++;
+                        item.Selected = false;
+                        item.Status = previous != null
+                            ? "File đã đổi so với " + previous.YoutubeVideoId
+                            : "Chờ ngày sau";
                         pending.Add(item);
                         pendingCount++;
                     }
@@ -89,84 +100,40 @@ public sealed partial class MainForm
 
         AssignSchedules();
         BindGrid();
-        Log($"Quét xong: {pendingCount} video chờ, {uploadedCount} đã đăng, {skippedBefore} bỏ qua vì số nhỏ hơn, {missingThumb} thiếu thumbnail.");
+        Log($"Quét xong: {pendingCount} video có ảnh sẽ đăng, {uploadedCount} đã đăng, {skippedBefore} bỏ vì số nhỏ hơn, {missingThumb} thiếu ảnh nên không vào hàng.");
     }
 
-    void ApplyFromIndex()
+    void RefreshQueueFromSettings()
     {
+        if (Loading || _current == null || IsBusy(_current))
+            return;
+
         WriteCurrent();
         var start = (int)numFrom.Value;
-        var channels = _items.Select(item => item.Channel).Distinct().ToList();
-        if (channels.Count == 0 && _current != null)
-            channels.Add(_current);
-        if (channels.Count == 0)
+        foreach (var source in _current.Sources)
+            source.StartIndex = start;
+        if (numSourceStart != null && numSourceStart.Value != start)
         {
-            MessageBox.Show(this, "Hãy chọn một kênh trước.", "Từ số");
-            return;
+            BeginLoad();
+            numSourceStart.Value = Math.Clamp(start, (int)numSourceStart.Minimum, (int)numSourceStart.Maximum);
+            EndLoad();
         }
 
-        foreach (var channel in channels)
-        {
-            var names = _items.Where(item => ReferenceEquals(item.Channel, channel)).Select(item => item.SourceName).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            foreach (var source in channel.Sources)
-            {
-                if (names.Count == 0 || names.Contains(source.Name))
-                    source.StartIndex = start;
-            }
-        }
-
+        _data.MaxUploadsPerRun = (int)numBatch.Value;
         _store.Save(_data);
-        ReadSelectedSource();
-
-        if (_items.Count == 0)
-        {
-            Log($"Đã đặt đăng từ số {start}. Bấm quét để áp dụng.");
+        if (_current.Sources.Count == 0)
             return;
-        }
 
-        var skipped = 0;
-        var pending = 0;
-        foreach (var item in _items)
-        {
-            if (!string.IsNullOrWhiteSpace(item.YoutubeVideoId))
-            {
-                item.Selected = false;
-                continue;
-            }
-
-            item.PublishAt = null;
-            if (FileNames.IsBeforeStart(item.Index, start))
-            {
-                item.Selected = false;
-                item.Status = $"Bỏ qua, trước số {start}";
-                skipped++;
-                continue;
-            }
-
-            item.Selected = true;
-            pending++;
-            if (item.Status.StartsWith("File đã đổi", StringComparison.Ordinal))
-                continue;
-            if (item.ThumbPath == null)
-                item.Status = item.TitleTrimmed ? "Thiếu thumbnail, tiêu đề đã cắt" : "Thiếu thumbnail";
-            else if (item.TitleTrimmed)
-                item.Status = "Sẵn sàng, tiêu đề đã cắt còn 100 ký tự";
-            else
-                item.Status = "Sẵn sàng";
-        }
-
-        AssignSchedules();
-        BindGrid();
-        Log(start <= 0
-            ? $"Đã chọn lại mọi video chưa đăng: {pending} video."
-            : $"Đã bỏ {skipped} video nhỏ hơn số {start}. Còn {pending} video được chọn. Lần quét sau vẫn giữ mốc này.");
+        Scan(SelectedChannelsOnly: true);
     }
 
     void AssignSchedules()
     {
         foreach (var channel in _items.Select(item => item.Channel).Distinct())
         {
-            var pending = _items.Where(item => ReferenceEquals(item.Channel, channel) && item.Selected && string.IsNullOrWhiteSpace(item.YoutubeVideoId)).ToList();
+            if (IsBusy(channel))
+                continue;
+            var pending = _items.Where(item => ReferenceEquals(item.Channel, channel) && string.IsNullOrWhiteSpace(item.YoutubeVideoId)).ToList();
             if (!channel.Options.IsScheduled)
             {
                 foreach (var item in pending)
@@ -178,17 +145,122 @@ public sealed partial class MainForm
                 .Where(entry => entry.ChannelProfileId == channel.Id && entry.PublishAt != null && !string.IsNullOrWhiteSpace(entry.YoutubeVideoId))
                 .Select(entry => entry.PublishAt!.Value);
             var plan = SchedulePlanner.Plan(pending.Count, channel.Options, used, DateTimeOffset.Now);
+            channel.ShortSource = plan.ShortSource;
+            channel.DayAlreadySet = plan.DayAlreadySet;
+            channel.PlannedDay = plan.TargetDay;
+            channel.ScheduleNote = plan.Warning;
             if (!string.IsNullOrWhiteSpace(plan.Warning))
                 Log($"{channel.Name}: {plan.Warning}");
-            for (var i = 0; i < pending.Count && i < plan.Times.Count; i++)
-                pending[i].PublishAt = plan.Times[i];
+
+            if (channel.Options.ExactDailyTimes)
+            {
+                for (var i = 0; i < pending.Count; i++)
+                {
+                    if (i < plan.Times.Count)
+                    {
+                        pending[i].PublishAt = plan.Times[i];
+                        pending[i].Selected = true;
+                        if (!pending[i].Status.StartsWith("File đã đổi", StringComparison.Ordinal))
+                            pending[i].Status = "Sẵn sàng, ngày " + plan.TargetDay?.ToString("dd/MM");
+                    }
+                    else
+                    {
+                        pending[i].PublishAt = null;
+                        pending[i].Selected = false;
+                        pending[i].Status = plan.ShortSource
+                            ? "Không đủ video cho một ngày, không đăng"
+                            : plan.DayAlreadySet
+                                ? "Ngày này đã có lịch"
+                                : "Chờ ngày sau";
+                    }
+                }
+            }
+            else
+            {
+                var keep = Math.Max(1, channel.Options.VideosPerDay);
+                for (var i = 0; i < pending.Count; i++)
+                {
+                    if (i < keep && i < plan.Times.Count)
+                    {
+                        pending[i].PublishAt = plan.Times[i];
+                        pending[i].Selected = true;
+                        pending[i].Status = "Sẵn sàng";
+                    }
+                    else
+                    {
+                        pending[i].PublishAt = i < plan.Times.Count ? plan.Times[i] : null;
+                        pending[i].Selected = false;
+                        if (string.IsNullOrWhiteSpace(pending[i].YoutubeVideoId))
+                            pending[i].Status = "Chờ ngày sau";
+                    }
+                }
+            }
+        }
+
+        lstChannels.Invalidate();
+    }
+
+    void ClearChannelQueue()
+    {
+        if (_current == null || IsBusy(_current))
+        {
+            if (IsBusy(_current))
+                MessageBox.Show(this, "Kênh này đang upload. Hết lượt đăng rồi hãy xóa hàng.", "Xóa hàng đợi");
+            return;
+        }
+
+        var count = _items.Count(item => item.Channel.Id == _current.Id);
+        if (count == 0)
+        {
+            MessageBox.Show(this, "Hàng đợi kênh này đang trống.", "Xóa hàng đợi");
+            return;
+        }
+
+        if (MessageBox.Show(
+                this,
+                $"Xóa {count} dòng trong hàng đợi của \"{_current.Name}\"?\nFile video và thumbnail không bị xóa. Bấm Quét lại thì danh sách hiện lại.",
+                "Xóa hàng đợi",
+                MessageBoxButtons.YesNo,
+                MessageBoxIcon.Question) != DialogResult.Yes)
+            return;
+
+        var channelId = _current.Id;
+        _items.RemoveAll(item => item.Channel.Id == channelId);
+        BindGrid();
+        UpdateSummary();
+        Log($"Đã xóa hàng đợi {_current.Name}: {count} dòng. File trên đĩa vẫn còn.");
+    }
+
+    void ShowChannelQueue()
+    {
+        if (_autoTickRunning || _current == null)
+            return;
+        if (IsBusy(_current))
+        {
+            BindGrid();
+            UpdateSummary();
+            return;
+        }
+        if (_current.Sources.Any(source => source.Enabled && !string.IsNullOrWhiteSpace(source.VideoFolder)))
+            Scan(SelectedChannelsOnly: true);
+        else
+        {
+            if (_uploading)
+                _items.RemoveAll(item => item.Channel.Id == _current.Id);
+            else
+                _items.Clear();
+            grid.Rows.Clear();
+            UpdateSummary();
         }
     }
+
+    IEnumerable<QueueItem> VisibleItems() =>
+        _current == null ? _items : _items.Where(item => item.Channel.Id == _current.Id);
 
     void BindGrid()
     {
         grid.Rows.Clear();
-        foreach (var item in _items)
+        foreach (var item in VisibleItems())
         {
             var index = grid.Rows.Add(
                 item.Selected,
@@ -289,28 +361,50 @@ public sealed partial class MainForm
 
     void UpdateSummary()
     {
-        var pending = _items.Count(item => string.IsNullOrEmpty(item.YoutubeVideoId));
-        var done = _items.Count - pending;
-        var selected = _items.Count(item => item.Selected);
-        lblSummary.Text = $"{_items.Count} dòng · {pending} chờ · {done} đã có video · {selected} đang chọn";
+        var visible = VisibleItems().ToList();
+        var pending = visible.Count(item => string.IsNullOrEmpty(item.YoutubeVideoId));
+        var done = visible.Count - pending;
+        var selected = visible.Count(item => item.Selected);
+        lblSummary.Text = $"{visible.Count} dòng · {pending} chờ · {done} đã có video · {selected} đang chọn";
     }
 
-    async Task UploadAsync()
+    async Task UploadAsync(bool confirm = true, bool allChannels = false)
     {
         WriteCurrent();
         _data.MaxUploadsPerRun = (int)numBatch.Value;
         _store.Save(_data);
-        var jobs = SelectedJobs(out var skippedUploaded);
+        if (_items.Any(item => item.Channel.Options.ExactDailyTimes))
+        {
+            AssignSchedules();
+            BindGrid();
+        }
+
+        var jobs = SelectedJobs(allChannels, out var skippedUploaded);
+        if (!confirm)
+            jobs = jobs.Where(job => _autoArmed.Contains(job.Channel.Id)).ToList();
         if (skippedUploaded > 0)
             Log($"Bỏ qua {skippedUploaded} dòng đã có video trên YouTube.");
         if (jobs.Count == 0)
         {
-            MessageBox.Show(this, "Chưa chọn video nào cần đăng.", "Đăng");
+            foreach (var channel in _items.Select(item => item.Channel).Distinct())
+            {
+                if (channel.DayAlreadySet && channel.PlannedDay != null)
+                    _autoDone[channel.Id] = channel.PlannedDay.Value;
+            }
+
+            NoteShortChannels();
+            if (confirm)
+            {
+                var note = _items.Select(item => item.Channel).FirstOrDefault(channel => channel.ShortSource)?.ScheduleNote;
+                MessageBox.Show(this, note ?? "Chưa chọn video nào cần đăng.", "Đăng");
+            }
+
             return;
         }
 
+        var exactRun = jobs.All(job => job.Channel.Options.ExactDailyTimes);
         var limit = (int)numBatch.Value;
-        if (limit > 0 && jobs.Count > limit)
+        if (!exactRun && limit > 0 && jobs.Count > limit)
         {
             Log($"Giới hạn mỗi lần chạy là {limit} video. Phần còn lại giữ trong bảng.");
             jobs = jobs.Take(limit).ToList();
@@ -355,15 +449,22 @@ public sealed partial class MainForm
         }
 
         var lines = jobs.GroupBy(job => job.Channel.Name).Select(group => $"{group.Key}: {group.Count()} video");
-        var confirm = MessageBox.Show(
-            this,
-            "Sẽ upload:\n" + string.Join("\n", lines) + "\n\nVideo hẹn giờ ở trạng thái riêng tư đến đúng giờ công khai.",
-            "Xác nhận đăng",
-            MessageBoxButtons.YesNo,
-            MessageBoxIcon.Question);
-        if (confirm != DialogResult.Yes)
+        var prompt = exactRun
+            ? "Chỉ đăng ngày mai, đúng các giờ đã nhập.\nApp còn mở thì ngày sau tự đăng tiếp đúng kênh này.\nKênh thêm sau không tự đăng cho đến khi bấm Đăng.\nThiếu video cho một ngày thì dừng, không đăng nửa ngày.\n\n" + string.Join("\n", lines)
+            : "Sẽ upload:\n" + string.Join("\n", lines) + "\n\nVideo hẹn giờ ở trạng thái riêng tư đến đúng giờ công khai.";
+        if (confirm && MessageBox.Show(this, prompt, "Xác nhận đăng", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
             return;
 
+        if (exactRun && confirm)
+        {
+            foreach (var channelId in jobs.Select(job => job.Channel.Id).Distinct())
+                _autoArmed.Add(channelId);
+            ArmAuto();
+        }
+
+        _busyChannelIds.Clear();
+        foreach (var channelId in jobs.Select(job => job.Channel.Id).Distinct())
+            _busyChannelIds.Add(channelId);
         SetBusy(true);
         _uploadCts = new CancellationTokenSource();
         var ok = 0;
@@ -418,7 +519,11 @@ public sealed partial class MainForm
                     if (!string.IsNullOrWhiteSpace(result.Warning))
                         Log(result.Warning);
                     if (!string.IsNullOrWhiteSpace(result.VideoId))
+                    {
                         Remember(job);
+                        if (job.Channel.Options.DeleteSourceAfterUpload)
+                            DeleteUploadedFile(job);
+                    }
                     UpdateRow(job);
                     Log(result.Status + (string.IsNullOrWhiteSpace(result.VideoId) ? "" : " " + result.VideoId));
 
@@ -458,7 +563,93 @@ public sealed partial class MainForm
             progressBar.Value = 0;
             lblProgress.Text = "";
             Log($"Kết thúc lần chạy: {ok} video lên YouTube, {fail} lỗi.");
+            if (exactRun)
+                RememberAutoDay(jobs);
         }
+    }
+
+    void ArmAuto()
+    {
+        var started = !_autoDaily;
+        _autoDaily = true;
+        _autoTimer ??= new System.Windows.Forms.Timer { Interval = 60_000 };
+        _autoTimer.Tick -= OnAutoTick;
+        _autoTimer.Tick += OnAutoTick;
+        _autoTimer.Start();
+        if (started)
+            Log("Lịch tự động chỉ chạy cho kênh vừa bấm Đăng. Kênh thêm sau không tự đăng.");
+    }
+
+    void StopAuto()
+    {
+        if (_autoDaily)
+            Log("Đã dừng lịch tự động.");
+        _autoDaily = false;
+        _autoArmed.Clear();
+        _autoTimer?.Stop();
+        _uploadCts?.Cancel();
+    }
+
+    async void OnAutoTick(object? sender, EventArgs e)
+    {
+        if (_autoTickRunning || _uploading || !_autoDaily || DateTimeOffset.Now < _autoNotBefore)
+            return;
+
+        var now = DateTimeOffset.Now;
+        var due = _data.Channels.Any(channel =>
+        {
+            var alreadyDone = _autoDone.TryGetValue(channel.Id, out var done)
+                && done == SchedulePlanner.TargetDay(channel.Options, now);
+            return AutoScheduleGate.IsDue(
+                _autoArmed.Contains(channel.Id),
+                channel.Enabled,
+                channel.Options.ExactDailyTimes,
+                _autoStopped.Contains(channel.Id),
+                alreadyDone);
+        });
+        if (!due)
+            return;
+
+        _autoTickRunning = true;
+        try
+        {
+            Log("Tới lượt ngày mới. Đang xếp lịch ngày kế tiếp.");
+            Scan(SelectedChannelsOnly: false);
+            await UploadAsync(confirm: false, allChannels: true);
+        }
+        finally
+        {
+            _autoTickRunning = false;
+        }
+    }
+
+    void NoteShortChannels()
+    {
+        foreach (var channel in _items.Select(item => item.Channel).Distinct().Where(channel => channel.ShortSource))
+        {
+            if (!_autoStopped.Add(channel.Id))
+                continue;
+            Log($"{channel.Name}: thiếu video cho một ngày. Dừng kênh này, không đăng tiếp.");
+        }
+
+        lstChannels.Invalidate();
+    }
+
+    void RememberAutoDay(IReadOnlyList<QueueItem> jobs)
+    {
+        foreach (var channel in jobs.Select(job => job.Channel).Distinct())
+        {
+            if (!channel.Options.ExactDailyTimes || channel.PlannedDay == null)
+                continue;
+
+            var failed = jobs.Any(job => ReferenceEquals(job.Channel, channel) && string.IsNullOrWhiteSpace(job.YoutubeVideoId));
+            if (failed)
+                _autoNotBefore = DateTimeOffset.Now.AddMinutes(15);
+            else
+                _autoDone[channel.Id] = channel.PlannedDay.Value;
+        }
+
+        NoteShortChannels();
     }
 
     async Task RetryThumbnailsAsync()
@@ -525,17 +716,24 @@ public sealed partial class MainForm
         }
     }
 
-    List<QueueItem> SelectedJobs(out int skippedUploaded)
+    List<QueueItem> SelectedJobs(bool allChannels, out int skippedUploaded)
     {
         grid.EndEdit();
-        skippedUploaded = 0;
-        var jobs = new List<QueueItem>();
         foreach (DataGridViewRow row in grid.Rows)
         {
             if (row.Tag is not QueueItem item)
                 continue;
             item.Selected = row.Cells["select"].Value is bool selected && selected;
             item.Title = row.Cells["title"].Value?.ToString() ?? item.Title;
+        }
+
+        skippedUploaded = 0;
+        var jobs = new List<QueueItem>();
+        var source = allChannels || _current == null
+            ? _items
+            : _items.Where(item => item.Channel.Id == _current.Id);
+        foreach (var item in source)
+        {
             if (!item.Selected)
                 continue;
             if (!string.IsNullOrWhiteSpace(item.YoutubeVideoId))
@@ -552,6 +750,77 @@ public sealed partial class MainForm
             .ThenBy(job => job.Channel.Name, StringComparer.CurrentCulture)
             .ThenBy(job => job.Index, StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    void DeleteUploadedFiles()
+    {
+        if (_uploading)
+        {
+            MessageBox.Show(this, "Đang đăng video. Hãy đợi xong rồi xóa file.", "Xóa file");
+            return;
+        }
+
+        var jobs = VisibleItems().Where(item => !string.IsNullOrWhiteSpace(item.YoutubeVideoId) && HasLocalSource(item)).ToList();
+        if (jobs.Count == 0)
+        {
+            MessageBox.Show(this, "Kênh này không còn file video hoặc thumbnail đã đăng trên máy.", "Xóa file");
+            return;
+        }
+
+        var answer = MessageBox.Show(
+            this,
+            $"Xóa vĩnh viễn video và thumbnail của {jobs.Count} video đã đăng trên kênh này?\nFile không vào thùng rác. Video trên YouTube vẫn còn.",
+            "Xóa video và thumb",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Warning);
+        if (answer != DialogResult.Yes)
+            return;
+
+        var removed = 0;
+        foreach (var job in jobs)
+        {
+            if (DeleteUploadedFile(job))
+            {
+                _items.Remove(job);
+                removed++;
+            }
+        }
+
+        BindGrid();
+        Log($"Đã xóa vĩnh viễn video và thumbnail của {removed} video đã đăng.");
+    }
+
+    static bool HasLocalSource(QueueItem item) =>
+        File.Exists(item.VideoPath) || (!string.IsNullOrWhiteSpace(item.ThumbPath) && File.Exists(item.ThumbPath));
+
+    bool DeleteUploadedFile(QueueItem job)
+    {
+        var ok = DeleteOne(job.VideoPath, "video");
+        if (!string.IsNullOrWhiteSpace(job.ThumbPath)
+            && !string.Equals(job.ThumbPath, job.VideoPath, StringComparison.OrdinalIgnoreCase))
+            ok = DeleteOne(job.ThumbPath, "thumbnail") && ok;
+
+        if (!ok)
+            return false;
+
+        job.Status = "Đã đăng, đã xóa file";
+        job.ThumbPath = null;
+        UpdateRow(job);
+        return true;
+    }
+
+    bool DeleteOne(string? path, string kind)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return true;
+        if (!SourceDeleter.TryDeletePermanent(path, out var error))
+        {
+            Log($"Không xóa được {kind} {path}. {error}");
+            return false;
+        }
+
+        Log($"Đã xóa vĩnh viễn {kind} {path}");
+        return true;
     }
 
     void Remember(QueueItem item)
@@ -605,12 +874,15 @@ public sealed partial class MainForm
     void SetBusy(bool busy)
     {
         _uploading = busy;
+        if (!busy)
+            _busyChannelIds.Clear();
         btnUpload.Enabled = !busy;
-        btnScanOne.Enabled = !busy;
         btnScanAll.Enabled = !busy;
         btnRetryThumbs.Enabled = !busy;
-        btnAddChannel.Enabled = !busy;
-        btnRemoveChannel.Enabled = !busy;
-        btnStop.Enabled = busy;
+        btnAddChannel.Enabled = true;
+        btnStop.Enabled = busy || _autoDaily;
+        ApplyEditorLock();
+        if (busy && _current != null && IsBusy(_current))
+            Log($"{_current.Name} đang upload. Bấm kênh khác để xem nguồn và cấu hình. Kênh đang upload thì khóa sửa.");
     }
 }

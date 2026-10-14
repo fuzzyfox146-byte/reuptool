@@ -87,6 +87,12 @@ static class DarkTheme
                 check.FlatStyle = FlatStyle.Flat;
                 check.ForeColor = Text;
                 check.BackColor = Color.Transparent;
+                check.UseVisualStyleBackColor = false;
+                check.FlatAppearance.BorderColor = Color.FromArgb(186, 186, 196);
+                check.FlatAppearance.BorderSize = 1;
+                check.FlatAppearance.CheckedBackColor = Color.FromArgb(36, 120, 72);
+                check.Paint -= PaintCheck;
+                check.Paint += PaintCheck;
                 break;
             case TextBox text:
                 text.BackColor = Input;
@@ -126,6 +132,31 @@ static class DarkTheme
                 form.ForeColor = Text;
                 break;
         }
+    }
+
+    static void PaintCheck(object? sender, PaintEventArgs e)
+    {
+        if (sender is not CheckBox box)
+            return;
+
+        var size = 15;
+        var y = Math.Max(0, (box.Height - size) / 2);
+        var rect = new Rectangle(1, y, size - 1, size - 1);
+        using var fill = new SolidBrush(box.Checked ? Color.FromArgb(36, 120, 72) : Input);
+        using var border = new Pen(Color.FromArgb(186, 186, 196));
+        e.Graphics.FillRectangle(fill, rect);
+        e.Graphics.DrawRectangle(border, rect);
+        if (!box.Checked)
+            return;
+
+        using var tick = new Pen(Color.White, 2);
+        e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        e.Graphics.DrawLines(tick, new Point[]
+        {
+            new(rect.Left + 3, rect.Top + 7),
+            new(rect.Left + 6, rect.Top + 11),
+            new(rect.Left + 12, rect.Top + 3)
+        });
     }
 
     static void StyleButton(Button button)
