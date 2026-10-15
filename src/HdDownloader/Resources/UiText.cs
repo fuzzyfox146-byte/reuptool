@@ -6,13 +6,19 @@ public static class UiText
 {
     private static readonly ResourceManager Manager = new("HdDownloader.Resources.Strings", typeof(UiText).Assembly);
 
+#if HD_VIEW_EDITION
+    public static string Title => "Tải video theo view";
+    public static string Blurb => "Giống bản tải hiện tại. Bật Theo view: trong khoảng Từ–Đến, video nhiều view nhất ghi số ở ô Số (1 ra 001), rồi giảm dần đến view thấp nhất. Tắt thì vẫn theo thứ tự trên kênh.";
+#else
     public static string Title => S(nameof(Title));
     public static string Blurb => S(nameof(Blurb));
+#endif
     public static string YtDlp => S(nameof(YtDlp));
     public static string Cookies => S(nameof(Cookies));
     public static string Root => S(nameof(Root));
     public static string Quality => S(nameof(Quality));
     public static string Parallel => S(nameof(Parallel));
+    public static string ByViews => S(nameof(ByViews));
     public static string AddChannel => S(nameof(AddChannel));
     public static string StartAll => S(nameof(StartAll));
     public static string StopAll => S(nameof(StopAll));

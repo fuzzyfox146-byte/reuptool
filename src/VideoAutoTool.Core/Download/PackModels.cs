@@ -7,11 +7,12 @@ public sealed record PackChannelRequest(
     int PlaylistStart,
     int PlaylistEnd,
     int NameStart,
-    string Quality);
+    string Quality,
+    bool OrderByViews = false);
 
 public sealed record PackDownloadResult(string ChannelFolder, DownloadStop Stop, string Detail);
 
-public sealed record PackItem(int PlaylistIndex, int Number, bool NeedVideo, bool NeedThumb);
+public sealed record PackItem(int PlaylistIndex, int Number, bool NeedVideo, bool NeedThumb, string? VideoId = null);
 
 public static class PackFolders
 {
@@ -69,6 +70,28 @@ public static class PackFolders
             if (needVideo || needThumb)
             {
                 items.Add(new PackItem(index, number, needVideo, needThumb));
+            }
+        }
+
+        return items;
+    }
+
+    public static IReadOnlyList<PackItem> PendingRanked(
+        string videoDir,
+        string thumbDir,
+        PackChannelRequest request,
+        IReadOnlyList<PackViewEntry> ranked)
+    {
+        var items = new List<PackItem>();
+        for (var rank = request.PlaylistStart; rank <= request.PlaylistEnd; rank++)
+        {
+            var entry = ranked[rank - 1];
+            var number = request.NameStart + (rank - request.PlaylistStart);
+            var needVideo = !DownloadResume.HasCompleted(videoDir, number, DownloadResume.IsVideoFile);
+            var needThumb = !DownloadResume.HasCompleted(thumbDir, number, DownloadResume.IsThumbnailFile);
+            if (needVideo || needThumb)
+            {
+                items.Add(new PackItem(entry.PlaylistIndex, number, needVideo, needThumb, entry.Id));
             }
         }
 

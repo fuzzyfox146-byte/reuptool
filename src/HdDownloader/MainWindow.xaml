@@ -61,6 +61,10 @@
                                   ItemsSource="{Binding ParallelOptions}"
                                   SelectedItem="{Binding Parallel}"/>
                     </StackPanel>
+                    <CheckBox Margin="16,22,0,0" VerticalAlignment="Bottom"
+                              Content="{x:Static t:UiText.ByViews}"
+                              IsChecked="{Binding OrderByViews}"
+                              Visibility="{Binding ViewOrderVisibility}"/>
                 </DockPanel>
             </StackPanel>
             <StackPanel Grid.Column="1">

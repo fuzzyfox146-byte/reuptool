@@ -5,7 +5,12 @@ namespace FrameRender;
 /// </summary>
 internal static class FrameEdition
 {
-#if FRAME_FAST_EDITION
+#if FRAME_FAST_EDITION_B
+    public const string DataFolder = "FrameRender-3";
+    public const string Title = "Frame Render 3";
+    public const bool PreferGpu = true;
+    public const bool AutoSiblingOutput = true;
+#elif FRAME_FAST_EDITION
     public const string DataFolder = "FrameRender-2";
     public const string Title = "Frame Render 2";
     public const bool PreferGpu = true;

@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using HdDownloader.Resources;
@@ -51,6 +52,16 @@ public partial class PackDownloadViewModel : ObservableObject
 
     [ObservableProperty]
     private int _parallel = 3;
+
+    [ObservableProperty]
+    private bool _orderByViews = PackSettingsStore.DefaultOrderByViews;
+
+    public Visibility ViewOrderVisibility { get; } =
+#if HD_VIEW_EDITION
+        Visibility.Visible;
+#else
+        Visibility.Collapsed;
+#endif
 
     [ObservableProperty]
     private bool _isRunning;
@@ -250,7 +261,8 @@ public partial class PackDownloadViewModel : ObservableObject
                 row.PlaylistStart,
                 row.PlaylistEnd,
                 row.NameStart,
-                Quality);
+                Quality,
+                OrderByViews);
             requests.Add(request);
             selected.Add(row);
             row.ResetProgress();
@@ -342,7 +354,7 @@ public partial class PackDownloadViewModel : ObservableObject
     }
 
     private PackChannelRequest ToRequest(PackChannelRowViewModel row) =>
-        new(RootFolder, row.FolderName, row.ChannelUrl, row.PlaylistStart, row.PlaylistEnd, row.NameStart, Quality);
+        new(RootFolder, row.FolderName, row.ChannelUrl, row.PlaylistStart, row.PlaylistEnd, row.NameStart, Quality, OrderByViews);
 
     private void Load()
     {
@@ -357,6 +369,7 @@ public partial class PackDownloadViewModel : ObservableObject
                 : saved.RootFolder;
             Quality = saved.Quality is "144" or "360" or "480" or "720" or "1080" ? saved.Quality : "720";
             Parallel = Math.Clamp(saved.Parallel == 0 ? 3 : saved.Parallel, 1, PackDownloader.MaxParallel);
+            OrderByViews = saved.OrderByViews;
             Channels.Clear();
             foreach (var channel in saved.Channels)
             {
@@ -392,6 +405,7 @@ public partial class PackDownloadViewModel : ObservableObject
         RootFolder = RootFolder,
         Quality = Quality,
         Parallel = Parallel,
+        OrderByViews = OrderByViews,
         Channels = Channels.Select(row => new PackChannelSettings
         {
             FolderName = row.FolderName,
@@ -419,6 +433,8 @@ public partial class PackDownloadViewModel : ObservableObject
         };
         return row;
     }
+
+    partial void OnOrderByViewsChanged(bool value) => Persist();
 
     private void Persist()
     {

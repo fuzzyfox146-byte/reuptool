@@ -101,6 +101,46 @@ public class UploaderTests
     }
 
     [Fact]
+    public void Schedule_DeferMovesThePublicDay()
+    {
+        var options = UploadOptions.CreateDefault();
+        options.ExactDailyTimes = true;
+        options.VideosPerDay = 2;
+        options.TimeSlotsText = "08:30\n21:00";
+        options.ScheduleStartDate = new DateOnly(2026, 10, 13);
+        options.TimeZoneId = "SE Asia Standard Time";
+        var now = new DateTimeOffset(2026, 10, 15, 16, 0, 0, TimeSpan.FromHours(7));
+
+        var plan = SchedulePlanner.Plan(2, options, [], now, new DateOnly(2026, 10, 17));
+
+        Assert.Equal(new DateOnly(2026, 10, 17), plan.TargetDay);
+        Assert.All(plan.Times, time => Assert.Equal(new DateOnly(2026, 10, 17), DateOnly.FromDateTime(Local(time).DateTime)));
+        Assert.Equal(new[] { 8, 21 }, plan.Times.Select(time => Local(time).Hour).ToArray());
+    }
+
+    [Fact]
+    public void ThumbFailure_DefersUnlessTheImageOrTheLoginIsWrong()
+    {
+        Assert.True(ApiErrors.ShouldDeferAfterThumbFailure(new InvalidOperationException("quotaExceeded")));
+        Assert.True(ApiErrors.ShouldDeferAfterThumbFailure(new InvalidOperationException("uploadLimitExceeded")));
+        Assert.False(ApiErrors.ShouldDeferAfterThumbFailure(new OperationCanceledException()));
+        Assert.False(ApiErrors.ShouldDeferAfterThumbFailure(new FileNotFoundException("Không thấy file thumbnail.")));
+    }
+
+    [Fact]
+    public void ScheduleDefer_KeepsTheClockOnTheNextDay()
+    {
+        var when = new DateTimeOffset(2026, 10, 16, 8, 30, 0, TimeSpan.FromHours(7));
+        var next = ScheduleDefer.AddOneDay(when, "SE Asia Standard Time");
+        var local = next.ToOffset(TimeSpan.FromHours(7));
+
+        Assert.Equal(new DateOnly(2026, 10, 17), DateOnly.FromDateTime(local.DateTime));
+        Assert.Equal(8, local.Hour);
+        Assert.Equal(30, local.Minute);
+        Assert.Equal(new DateOnly(2026, 10, 17), ScheduleDefer.NextPublicDay(when, "SE Asia Standard Time", when));
+    }
+
+    [Fact]
     public void PermanentDelete_RemovesFileAndLeavesNoRecycleCopy()
     {
         var folder = Path.Combine(Path.GetTempPath(), "yt-delete-" + Guid.NewGuid().ToString("N"));

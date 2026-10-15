@@ -87,8 +87,30 @@ public sealed class PackDownloader
             Directory.CreateDirectory(thumbDir);
             Directory.CreateDirectory(PackFolders.Temp(folder));
 
-            var pending = PackFolders.Pending(videoDir, thumbDir, request);
             var label = request.FolderName.Trim();
+            IReadOnlyList<PackItem> pending;
+            if (request.OrderByViews)
+            {
+                var ranked = await RankByViewsAsync(tools, request, label, log, linked.Token).ConfigureAwait(false);
+                if (ranked.Result is not null)
+                {
+                    if (ranked.Result.Stop == DownloadStop.CookieDead)
+                    {
+                        markCookie();
+                        linked.Cancel();
+                    }
+
+                    set(ranked.Result);
+                    return;
+                }
+
+                pending = PackFolders.PendingRanked(videoDir, thumbDir, request, ranked.Entries);
+            }
+            else
+            {
+                pending = PackFolders.Pending(videoDir, thumbDir, request);
+            }
+
             if (pending.Count == 0)
             {
                 log?.Report(new DownloadNotice(null, $"{label}  đã có đủ video và thumb, không tải lại.", folder));
@@ -98,7 +120,9 @@ public sealed class PackDownloader
 
             var probe = await _runner.RunAsync(
                 tools.YtDlpPath,
-                PackPlan.Probe(tools, request, pending[0].PlaylistIndex),
+                pending[0].VideoId is { Length: > 0 } videoId
+                    ? PackPlan.ProbeVideo(tools, videoId)
+                    : PackPlan.Probe(tools, request, pending[0].PlaylistIndex),
                 log: null,
                 linked.Token).ConfigureAwait(false);
             if (probe.CookieDead)
@@ -187,7 +211,9 @@ public sealed class PackDownloader
             {
                 var video = await RunLoggedAsync(
                     tools,
-                    PackPlan.Video(tools, request, item.PlaylistIndex, item.Number),
+                    item.VideoId is { Length: > 0 } videoId
+                        ? PackPlan.VideoById(tools, request, videoId, item.Number)
+                        : PackPlan.Video(tools, request, item.PlaylistIndex, item.Number),
                     new DownloadActivityLog(log, "Video", folder),
                     linked.Token).ConfigureAwait(false);
                 if (video.CookieDead)
@@ -207,7 +233,9 @@ public sealed class PackDownloader
             {
                 var thumb = await RunLoggedAsync(
                     tools,
-                    PackPlan.Thumb(tools, request, item.PlaylistIndex, item.Number),
+                    item.VideoId is { Length: > 0 } videoId
+                        ? PackPlan.ThumbById(tools, request, videoId, item.Number)
+                        : PackPlan.Thumb(tools, request, item.PlaylistIndex, item.Number),
                     new DownloadActivityLog(log, "Thumb", folder),
                     linked.Token).ConfigureAwait(false);
                 if (thumb.CookieDead)
@@ -241,6 +269,56 @@ public sealed class PackDownloader
         DownloadActivityLog activity,
         CancellationToken cancellationToken) =>
         _runner.RunAsync(tools.YtDlpPath, arguments, new Progress<string>(activity.OnLine), cancellationToken);
+
+    private async Task<(IReadOnlyList<PackViewEntry> Entries, PackDownloadResult? Result)> RankByViewsAsync(
+        DownloadTools tools,
+        PackChannelRequest request,
+        string label,
+        IProgress<DownloadNotice>? log,
+        CancellationToken cancellationToken)
+    {
+        var lines = new List<string>();
+        var catalog = await _runner.RunAsync(
+            tools.YtDlpPath,
+            PackPlan.ViewCatalog(tools, request),
+            new Progress<string>(lines.Add),
+            cancellationToken).ConfigureAwait(false);
+        if (catalog.CookieDead)
+        {
+            return ([], Cookie(PackFolders.Channel(request), catalog.CookieLine));
+        }
+
+        if (catalog.ExitCode != 0)
+        {
+            return ([], new PackDownloadResult(PackFolders.Channel(request), DownloadStop.Failed, "Không đọc được view của kênh. Đã dừng trước khi tải."));
+        }
+
+        var ranked = PackViewRank.Order(PackViewRank.Parse(lines));
+        if (ranked.Count < request.PlaylistEnd)
+        {
+            return ([], new PackDownloadResult(
+                PackFolders.Channel(request),
+                DownloadStop.Failed,
+                $"Kênh có {ranked.Count} video, không đủ đến hạng {request.PlaylistEnd} theo view."));
+        }
+
+        var window = ranked.Skip(request.PlaylistStart - 1).Take(request.PlaylistEnd - request.PlaylistStart + 1).ToList();
+        var top = window[0];
+        var number = request.NameStart;
+        if (window.All(entry => entry.Views == 0))
+        {
+            log?.Report(new DownloadNotice(null, $"{label}  Không đọc được số view, giữ thứ tự trên kênh.", PackFolders.Channel(request)));
+        }
+        else
+        {
+            log?.Report(new DownloadNotice(
+                null,
+                $"{label}  Theo view: file {number:000} là {top.Views} view, rồi giảm dần.",
+                PackFolders.Channel(request)));
+        }
+
+        return (ranked, null);
+    }
 
     private static PackDownloadResult Cookie(string folder, string? line)
     {

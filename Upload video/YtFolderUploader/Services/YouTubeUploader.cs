@@ -33,10 +33,10 @@ public sealed class YouTubeUploader
                 : await TryPlaylistAsync(service, item, videoId, log, cancellationToken);
             var warning = Join(thumb.Warning, playlist.Warning);
             var status = "Đã đăng";
-            if (thumb.Warning != null && playlist.Warning != null)
-                status = "Đã đăng, lỗi thumbnail và playlist";
-            else if (thumb.StopBatch)
+            if (thumb.Defer)
                 status = "Đã đăng, hết hạn mức khi gắn thumbnail";
+            else if (thumb.Warning != null && playlist.Warning != null)
+                status = "Đã đăng, lỗi thumbnail và playlist";
             else if (thumb.Warning != null)
                 status = "Đã đăng, chưa gắn được thumbnail";
             else if (playlist.StopBatch)
@@ -45,6 +45,7 @@ public sealed class YouTubeUploader
                 status = "Đã đăng, lỗi playlist";
 
             var stop = thumb.StopBatch || playlist.StopBatch;
+            var defer = thumb.Defer || playlist.StopBatch;
 
             progress?.Report(new UploadProgress(100, status));
             return new UploadOneResult
@@ -52,6 +53,8 @@ public sealed class YouTubeUploader
                 VideoUploaded = true,
                 VideoId = videoId,
                 StopBatch = stop,
+                DeferSchedule = defer,
+                ThumbAttached = thumb.Warning == null,
                 Status = status,
                 Warning = warning
             };
@@ -73,19 +76,23 @@ public sealed class YouTubeUploader
         {
             if (videoId != null)
             {
+                var limited = ApiErrors.IsDailyQuota(ex);
                 return new UploadOneResult
                 {
                     VideoUploaded = true,
                     VideoId = videoId,
-                    StopBatch = ApiErrors.IsDailyQuota(ex),
+                    StopBatch = limited,
+                    DeferSchedule = limited,
                     Status = "Đã đăng, lỗi sau upload",
                     Warning = ApiErrors.Explain(ex)
                 };
             }
 
+            var quota = ApiErrors.IsDailyQuota(ex);
             return new UploadOneResult
             {
-                StopBatch = ApiErrors.IsDailyQuota(ex),
+                StopBatch = quota,
+                DeferSchedule = quota,
                 Status = "Lỗi: " + ApiErrors.Explain(ex)
             };
         }
@@ -97,7 +104,33 @@ public sealed class YouTubeUploader
         string thumbPath,
         CancellationToken cancellationToken)
     {
-        await SetThumbnailAsync(service, videoId, thumbPath, log: null, cancellationToken);
+        await SetThumbnailAsync(service, videoId, thumbPath, log: null, cancellationToken, retry: true);
+    }
+
+    public Task ProbeThumbnailAsync(
+        YouTubeService service,
+        string videoId,
+        string thumbPath,
+        Action<string>? log,
+        CancellationToken cancellationToken) =>
+        SetThumbnailAsync(service, videoId, thumbPath, log, cancellationToken, retry: false);
+
+    public async Task MovePublishAsync(
+        YouTubeService service,
+        string videoId,
+        DateTimeOffset publishAt,
+        CancellationToken cancellationToken)
+    {
+        var video = new Video
+        {
+            Id = videoId,
+            Status = new VideoStatus
+            {
+                PrivacyStatus = "private",
+                PublishAtDateTimeOffset = publishAt
+            }
+        };
+        await service.Videos.Update(video, "status").ExecuteAsync(cancellationToken);
     }
 
     async Task<string> UploadVideoAsync(
@@ -243,7 +276,7 @@ public sealed class YouTubeUploader
         try
         {
             log?.Invoke("Đang gắn thumbnail...");
-            await SetThumbnailAsync(service, videoId, item.ThumbPath, log, cancellationToken);
+            await SetThumbnailAsync(service, videoId, item.ThumbPath, log, cancellationToken, retry: true);
             log?.Invoke("Đã gắn thumbnail.");
             return new StepResult(null, false);
         }
@@ -255,7 +288,8 @@ public sealed class YouTubeUploader
         {
             var message = ApiErrors.Explain(ex);
             log?.Invoke("Thumbnail: " + message);
-            return new StepResult(message, ApiErrors.IsDailyQuota(ex));
+            var defer = ApiErrors.ShouldDeferAfterThumbFailure(ex);
+            return new StepResult(message, true, defer);
         }
     }
 
@@ -264,12 +298,13 @@ public sealed class YouTubeUploader
         string videoId,
         string thumbPath,
         Action<string>? log,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool retry)
     {
         var prepared = ThumbnailPrep.Prepare(thumbPath);
         try
         {
-            var delays = new[] { 0, 10, 20, 40 };
+            var delays = retry ? new[] { 0, 10, 20, 40 } : new[] { 0 };
             Exception? last = null;
             for (var attempt = 0; attempt < delays.Length; attempt++)
             {
@@ -294,7 +329,7 @@ public sealed class YouTubeUploader
                     last = ex;
                 }
 
-                if (last != null && !ApiErrors.IsTransientThumbnail(last))
+                if (last != null && (ApiErrors.ShouldDeferAfterThumbFailure(last) || !ApiErrors.IsTransientThumbnail(last)))
                     break;
             }
 
@@ -347,7 +382,7 @@ public sealed class YouTubeUploader
         }
     }
 
-    readonly record struct StepResult(string? Warning, bool StopBatch);
+    readonly record struct StepResult(string? Warning, bool StopBatch, bool Defer = false);
 
     static string Privacy(string mode) => mode switch
     {

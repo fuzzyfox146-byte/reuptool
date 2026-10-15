@@ -14,6 +14,8 @@ public sealed class PackSettings
 
     public int Parallel { get; set; } = 3;
 
+    public bool OrderByViews { get; set; } = PackSettingsStore.DefaultOrderByViews;
+
     public List<PackChannelSettings> Channels { get; set; } = [];
 }
 
@@ -34,9 +36,13 @@ public static class PackSettingsStore
 {
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 
+    public static string AppFolder { get; set; } = "HdDownloader";
+
+    public static bool DefaultOrderByViews { get; set; }
+
     public static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "HdDownloader",
+        AppFolder,
         "settings.json");
 
     public static PackSettings Load()

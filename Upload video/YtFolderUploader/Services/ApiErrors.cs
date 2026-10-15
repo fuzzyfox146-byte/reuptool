@@ -15,6 +15,32 @@ public static class ApiErrors
             || text.Contains("uploadLimitExceeded", StringComparison.OrdinalIgnoreCase);
     }
 
+    public static bool IsBadThumbFile(Exception exception)
+    {
+        if (exception is FileNotFoundException)
+            return true;
+
+        var reason = Reason(exception);
+        return reason is "invalidImage" or "invalidImageSize" or "mediaBodyRequired";
+    }
+
+    public static bool IsAuthFailure(Exception exception)
+    {
+        var reason = Reason(exception);
+        return reason is "forbidden" or "insufficientPermissions" or "unauthorized" or "authError";
+    }
+
+    public static bool ShouldDeferAfterThumbFailure(Exception exception)
+    {
+        if (exception is OperationCanceledException)
+            return false;
+        if (IsBadThumbFile(exception))
+            return false;
+        if (IsAuthFailure(exception))
+            return false;
+        return true;
+    }
+
     public static bool IsTransientThumbnail(Exception exception)
     {
         var reason = Reason(exception);

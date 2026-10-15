@@ -23,6 +23,7 @@ public sealed class ChannelProfile
     public string YoutubeChannelTitle { get; set; } = "";
     public List<VideoSource> Sources { get; set; } = new();
     public string TemplateId { get; set; } = "";
+    public DateOnly? UploadDeferredTo { get; set; }
     public UploadOptions Options { get; set; } = UploadOptions.CreateDefault();
 
     [JsonIgnore]
@@ -150,6 +151,7 @@ public sealed class HistoryEntry
     public string SourceName { get; set; } = "";
     public string Title { get; set; } = "";
     public string YoutubeVideoId { get; set; } = "";
+    public string? ThumbPath { get; set; }
     public DateTimeOffset? PublishAt { get; set; }
     public string Status { get; set; } = "";
     public DateTimeOffset UploadedAt { get; set; }
@@ -239,6 +241,8 @@ public sealed class UploadOneResult
     public bool VideoUploaded { get; init; }
     public string? VideoId { get; init; }
     public bool StopBatch { get; init; }
+    public bool DeferSchedule { get; init; }
+    public bool ThumbAttached { get; init; }
     public string Status { get; init; } = "";
     public string? Warning { get; init; }
 }

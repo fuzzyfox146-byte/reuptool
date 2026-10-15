@@ -127,11 +127,11 @@ public sealed partial class MainForm
         Scan(SelectedChannelsOnly: true);
     }
 
-    void AssignSchedules()
+    void AssignSchedules(bool includeBusy = false)
     {
         foreach (var channel in _items.Select(item => item.Channel).Distinct())
         {
-            if (IsBusy(channel))
+            if (!includeBusy && IsBusy(channel))
                 continue;
             var pending = _items.Where(item => ReferenceEquals(item.Channel, channel) && string.IsNullOrWhiteSpace(item.YoutubeVideoId)).ToList();
             if (!channel.Options.IsScheduled)
@@ -144,7 +144,7 @@ public sealed partial class MainForm
             var used = _history.Entries
                 .Where(entry => entry.ChannelProfileId == channel.Id && entry.PublishAt != null && !string.IsNullOrWhiteSpace(entry.YoutubeVideoId))
                 .Select(entry => entry.PublishAt!.Value);
-            var plan = SchedulePlanner.Plan(pending.Count, channel.Options, used, DateTimeOffset.Now);
+            var plan = SchedulePlanner.Plan(pending.Count, channel.Options, used, DateTimeOffset.Now, channel.UploadDeferredTo);
             channel.ShortSource = plan.ShortSource;
             channel.DayAlreadySet = plan.DayAlreadySet;
             channel.PlannedDay = plan.TargetDay;
@@ -470,6 +470,8 @@ public sealed partial class MainForm
         var ok = 0;
         var fail = 0;
         var blockedClients = new HashSet<string>(StringComparer.Ordinal);
+        var deferredClients = new HashSet<string>(StringComparer.Ordinal);
+        var thumbChecked = new HashSet<string>(StringComparer.Ordinal);
         var services = new Dictionary<string, Google.Apis.YouTube.v3.YouTubeService>();
         var progress = new Progress<UploadProgress>(update =>
         {
@@ -486,9 +488,13 @@ public sealed partial class MainForm
                     break;
                 if (blockedClients.Contains(job.Channel.ClientId))
                 {
-                    job.Status = "Bỏ qua vì project đã hết hạn mức";
-                    fail++;
-                    UpdateRow(job);
+                    if (!deferredClients.Contains(job.Channel.ClientId))
+                    {
+                        job.Status = "Bỏ qua vì project đã hết hạn mức";
+                        fail++;
+                        UpdateRow(job);
+                    }
+
                     continue;
                 }
 
@@ -501,6 +507,32 @@ public sealed partial class MainForm
                     {
                         service = YouTubeAuth.CreateService(job.Channel);
                         services[job.Channel.Id] = service;
+                    }
+
+                    if (thumbChecked.Add(job.Channel.Id) && FindThumbProbe(job.Channel) is { } probe)
+                    {
+                        Log($"{job.Channel.Name}: kiểm tra gắn thumbnail trước khi đăng.");
+                        try
+                        {
+                            await _uploader.ProbeThumbnailAsync(service, probe.VideoId, probe.ThumbPath, Log, _uploadCts.Token);
+                            Log($"{job.Channel.Name}: thumbnail gắn được. Bắt đầu đăng.");
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            throw;
+                        }
+                        catch (Exception ex) when (ApiErrors.ShouldDeferAfterThumbFailure(ex))
+                        {
+                            Log($"{job.Channel.Name}: không gắn được thumbnail. " + ApiErrors.Explain(ex));
+                            DeferAfterThumbLimit(job.Channel, job.PublishAt);
+                            blockedClients.Add(job.Channel.ClientId);
+                            deferredClients.Add(job.Channel.ClientId);
+                            continue;
+                        }
+                        catch (Exception ex)
+                        {
+                            Log($"{job.Channel.Name}: ảnh thumbnail cũ không dùng để thử. " + ApiErrors.Explain(ex));
+                        }
                     }
 
                     var result = await _uploader.UploadAsync(service, job, progress, Log, _uploadCts.Token);
@@ -518,19 +550,41 @@ public sealed partial class MainForm
                     job.Status = result.Status;
                     if (!string.IsNullOrWhiteSpace(result.Warning))
                         Log(result.Warning);
+                    var originalPublish = job.PublishAt;
                     if (!string.IsNullOrWhiteSpace(result.VideoId))
                     {
+                        if (result.DeferSchedule && originalPublish != null)
+                        {
+                            var moved = ScheduleDefer.AddOneDay(originalPublish.Value, job.Channel.Options.TimeZoneId);
+                            try
+                            {
+                                await _uploader.MovePublishAsync(service, result.VideoId, moved, _uploadCts.Token);
+                                job.PublishAt = moved;
+                                Log($"Đã chuyển giờ công khai của {result.VideoId} sang {FormatSchedule(job)}.");
+                            }
+                            catch (Exception moveEx) when (moveEx is not OperationCanceledException)
+                            {
+                                Log("Không đổi được giờ công khai trên YouTube: " + ApiErrors.Explain(moveEx));
+                            }
+                        }
+
                         Remember(job);
-                        if (job.Channel.Options.DeleteSourceAfterUpload)
+                        if (job.Channel.Options.DeleteSourceAfterUpload && result.ThumbAttached && !result.DeferSchedule)
                             DeleteUploadedFile(job);
                     }
                     UpdateRow(job);
                     Log(result.Status + (string.IsNullOrWhiteSpace(result.VideoId) ? "" : " " + result.VideoId));
 
-                    if (result.StopBatch)
+                    if (result.DeferSchedule)
+                    {
+                        DeferAfterThumbLimit(job.Channel, originalPublish);
+                        blockedClients.Add(job.Channel.ClientId);
+                        deferredClients.Add(job.Channel.ClientId);
+                    }
+                    else if (result.StopBatch)
                     {
                         blockedClients.Add(job.Channel.ClientId);
-                        Log("Project này hết hạn mức upload hôm nay. Kênh khác dùng client_id khác vẫn tiếp tục.");
+                        Log("Dừng đăng tiếp vì không gắn được thumbnail hoặc hết hạn mức. Kênh khác dùng client_id khác vẫn tiếp tục.");
                     }
                 }
                 catch (OperationCanceledException)
@@ -550,6 +604,12 @@ public sealed partial class MainForm
                     fail++;
                     UpdateRow(job);
                     Log(job.Status);
+                    if (ApiErrors.IsDailyQuota(ex))
+                    {
+                        DeferAfterThumbLimit(job.Channel, job.PublishAt);
+                        blockedClients.Add(job.Channel.ClientId);
+                        deferredClients.Add(job.Channel.ClientId);
+                    }
                 }
             }
         }
@@ -562,6 +622,12 @@ public sealed partial class MainForm
             SetBusy(false);
             progressBar.Value = 0;
             lblProgress.Text = "";
+            if (deferredClients.Count > 0)
+            {
+                AssignSchedules();
+                BindGrid();
+            }
+
             Log($"Kết thúc lần chạy: {ok} video lên YouTube, {fail} lỗi.");
             if (exactRun)
                 RememberAutoDay(jobs);
@@ -599,7 +665,7 @@ public sealed partial class MainForm
         var due = _data.Channels.Any(channel =>
         {
             var alreadyDone = _autoDone.TryGetValue(channel.Id, out var done)
-                && done == SchedulePlanner.TargetDay(channel.Options, now);
+                && done == SchedulePlanner.TargetDay(channel.Options, now, channel.UploadDeferredTo);
             return AutoScheduleGate.IsDue(
                 _autoArmed.Contains(channel.Id),
                 channel.Enabled,
@@ -644,7 +710,11 @@ public sealed partial class MainForm
 
             var failed = jobs.Any(job => ReferenceEquals(job.Channel, channel) && string.IsNullOrWhiteSpace(job.YoutubeVideoId));
             if (failed)
-                _autoNotBefore = DateTimeOffset.Now.AddMinutes(15);
+            {
+                var backoff = DateTimeOffset.Now.AddMinutes(15);
+                if (_autoNotBefore < backoff)
+                    _autoNotBefore = backoff;
+            }
             else
                 _autoDone[channel.Id] = channel.PlannedDay.Value;
         }
@@ -823,6 +893,46 @@ public sealed partial class MainForm
         return true;
     }
 
+    (string VideoId, string ThumbPath)? FindThumbProbe(ChannelProfile channel)
+    {
+        var fromHistory = _history.Entries
+            .Where(entry => entry.ChannelProfileId == channel.Id && !string.IsNullOrWhiteSpace(entry.YoutubeVideoId))
+            .OrderByDescending(entry => entry.UploadedAt)
+            .FirstOrDefault(entry => !string.IsNullOrWhiteSpace(entry.ThumbPath) && File.Exists(entry.ThumbPath));
+        if (fromHistory != null)
+            return (fromHistory.YoutubeVideoId, fromHistory.ThumbPath!);
+
+        var row = _items.LastOrDefault(item =>
+            item.Channel.Id == channel.Id
+            && !string.IsNullOrWhiteSpace(item.YoutubeVideoId)
+            && !string.IsNullOrWhiteSpace(item.ThumbPath)
+            && File.Exists(item.ThumbPath));
+        return row == null ? null : (row.YoutubeVideoId, row.ThumbPath!);
+    }
+
+    void DeferAfterThumbLimit(ChannelProfile channel, DateTimeOffset? publishAt)
+    {
+        var day = ScheduleDefer.NextPublicDay(publishAt, channel.Options.TimeZoneId, DateTimeOffset.Now);
+        foreach (var other in _data.Channels)
+        {
+            var sameProject = other.Id == channel.Id
+                || (!string.IsNullOrWhiteSpace(channel.ClientId)
+                    && string.Equals(other.ClientId, channel.ClientId, StringComparison.Ordinal));
+            if (!sameProject)
+                continue;
+            if (other.UploadDeferredTo == null || other.UploadDeferredTo < day)
+                other.UploadDeferredTo = day;
+        }
+
+        _store.Save(_data);
+        var until = ScheduleDefer.StartOfDay(day, channel.Options.TimeZoneId);
+        if (_autoNotBefore < until)
+            _autoNotBefore = until;
+        Log($"{channel.Name}: hết hạn mức khi gắn thumbnail. Không đăng thêm. Lịch công khai chuyển sang {day:dd/MM}.");
+        AssignSchedules(includeBusy: true);
+        BindGrid();
+    }
+
     void Remember(QueueItem item)
     {
         if (string.IsNullOrWhiteSpace(item.YoutubeVideoId))
@@ -845,6 +955,7 @@ public sealed partial class MainForm
         entry.SourceName = item.SourceName;
         entry.Title = item.Title;
         entry.YoutubeVideoId = item.YoutubeVideoId;
+        entry.ThumbPath = item.ThumbPath;
         entry.PublishAt = item.PublishAt;
         entry.Status = item.Status;
         entry.UploadedAt = DateTimeOffset.Now;

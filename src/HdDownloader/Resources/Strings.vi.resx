@@ -129,4 +129,7 @@
   <data name="FileFilterCookie" xml:space="preserve">
     <value>Cookie (*.txt)|*.txt|Tất cả (*.*)|*.*</value>
   </data>
+  <data name="ByViews" xml:space="preserve">
+    <value>Theo view, cao xuống thấp</value>
+  </data>
 </root>

@@ -10,12 +10,13 @@ public static class SchedulePlanner
         int count,
         UploadOptions options,
         IEnumerable<DateTimeOffset> used,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        DateOnly? notBefore = null)
     {
         var plan = new SchedulePlan();
         var zone = TimeZones.Resolve(options.TimeZoneId);
         if (options.ExactDailyTimes)
-            return PlanOneDayAhead(count, options, used, now, zone);
+            return PlanOneDayAhead(count, options, used, now, zone, notBefore);
 
         if (count <= 0)
             return plan;
@@ -24,9 +25,7 @@ public static class SchedulePlanner
         plan.Warning = warning;
 
         var usedKeys = new HashSet<long>(used.Select(Key));
-        var localNow = TimeZoneInfo.ConvertTime(now, zone);
-        var tomorrow = DateOnly.FromDateTime(localNow.DateTime).AddDays(1);
-        var date = options.ScheduleStartDate > tomorrow ? options.ScheduleStartDate : tomorrow;
+        var date = TargetDay(options, now, notBefore);
 
         var guard = 0;
         while (plan.Times.Count < count && guard++ < 4000)
@@ -57,12 +56,15 @@ public static class SchedulePlanner
         return plan;
     }
 
-    public static DateOnly TargetDay(UploadOptions options, DateTimeOffset now)
+    public static DateOnly TargetDay(UploadOptions options, DateTimeOffset now, DateOnly? notBefore = null)
     {
         var zone = TimeZones.Resolve(options.TimeZoneId);
         var localNow = TimeZoneInfo.ConvertTime(now, zone);
         var tomorrow = DateOnly.FromDateTime(localNow.DateTime).AddDays(1);
-        return options.ScheduleStartDate > tomorrow ? options.ScheduleStartDate : tomorrow;
+        var day = options.ScheduleStartDate > tomorrow ? options.ScheduleStartDate : tomorrow;
+        if (notBefore != null && notBefore > day)
+            day = notBefore.Value;
+        return day;
     }
 
     public static SchedulePlan PlanOneDayAhead(
@@ -70,12 +72,13 @@ public static class SchedulePlanner
         UploadOptions options,
         IEnumerable<DateTimeOffset> used,
         DateTimeOffset now,
-        TimeZoneInfo? zone = null)
+        TimeZoneInfo? zone = null,
+        DateOnly? notBefore = null)
     {
         var plan = new SchedulePlan();
         zone ??= TimeZones.Resolve(options.TimeZoneId);
         var slots = Parse(options.TimeSlotsText).Distinct().OrderBy(slot => slot).ToList();
-        var day = TargetDay(options, now);
+        var day = TargetDay(options, now, notBefore);
         plan.TargetDay = day;
         if (slots.Count == 0)
         {

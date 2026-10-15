@@ -9,6 +9,10 @@ public partial class App : Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+#if HD_VIEW_EDITION
+        HdDownloader.Services.PackSettingsStore.AppFolder = "HdDownloaderView";
+        HdDownloader.Services.PackSettingsStore.DefaultOrderByViews = true;
+#endif
         var window = new MainWindow(new PackDownloadViewModel(new PackDownloader(new YtDlpProcessRunner())));
         window.Show();
     }

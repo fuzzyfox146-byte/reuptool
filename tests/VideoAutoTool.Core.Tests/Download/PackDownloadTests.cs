@@ -126,6 +126,62 @@ public class PackDownloadTests
         Assert.Contains("--print", runner.Calls[0]);
     }
 
+    [Fact]
+    public void ViewRank_PutsTheHighestViewFirst_AndKeepsChannelOrderOnATie()
+    {
+        var ranked = PackViewRank.Order(PackViewRank.Parse(
+        [
+            "aaaaaaaaaaa\t10\t1",
+            "bbbbbbbbbbb\t90\t2",
+            "ccccccccccc\t90\t3",
+            "không phải dòng view",
+            "ddddddddddd\tNA\t4"
+        ]));
+
+        Assert.Equal(
+            ["bbbbbbbbbbb", "ccccccccccc", "aaaaaaaaaaa", "ddddddddddd"],
+            ranked.Select(entry => entry.Id).ToArray());
+    }
+
+    [Fact]
+    public async Task ViewOrder_NumbersTheHighestViewAs001()
+    {
+        using var home = new ToolHome();
+        var runner = new RecordingYtDlp
+        {
+            CatalogLines =
+            [
+                "aaaaaaaaaaa\t10\t1",
+                "bbbbbbbbbbb\t90\t2",
+                "ccccccccccc\t40\t3"
+            ]
+        };
+        var downloader = new PackDownloader(runner);
+        var request = new PackChannelRequest(home.Root, "HD036", "https://www.youtube.com/@Chosen", 1, 2, 1, "720", true);
+
+        var result = await downloader.DownloadAsync(home.Tools, request, 2, null, CancellationToken.None);
+
+        Assert.Equal(DownloadStop.Completed, result.Stop);
+        Assert.Contains(runner.Calls, call => call.Contains("https://www.youtube.com/watch?v=bbbbbbbbbbb") && call.Contains("001 %(title).100s.%(ext)s"));
+        Assert.Contains(runner.Calls, call => call.Contains("https://www.youtube.com/watch?v=ccccccccccc") && call.Contains("002 %(title).100s.%(ext)s"));
+        Assert.DoesNotContain(runner.Calls, call => call.Any(arg => arg.Contains("aaaaaaaaaaa", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task ViewOrder_FailsWhenTheChannelHasFewerVideosThanTheRank()
+    {
+        using var home = new ToolHome();
+        var runner = new RecordingYtDlp { CatalogLines = ["aaaaaaaaaaa\t10\t1"] };
+        var downloader = new PackDownloader(runner);
+        var request = new PackChannelRequest(home.Root, "HD036", "https://www.youtube.com/@Chosen", 1, 2, 1, "720", true);
+
+        var result = await downloader.DownloadAsync(home.Tools, request, 1, null, CancellationToken.None);
+
+        Assert.Equal(DownloadStop.Failed, result.Stop);
+        Assert.Contains("không đủ", result.Detail);
+        Assert.DoesNotContain(runner.Calls, call => call.Contains("--merge-output-format"));
+    }
+
     private static DownloadTools Tools(string root) =>
         new(Path.Combine(root, "yt-dlp.exe"), Path.Combine(root, "bin"), Path.Combine(root, "cookies.txt"));
 
@@ -160,13 +216,29 @@ public class PackDownloadTests
 
         public bool ProbeCookieDead { get; init; }
 
+        public IReadOnlyList<string> CatalogLines { get; init; } = [];
+
         public async Task<YtDlpRunResult> RunAsync(
             string executable,
             IReadOnlyList<string> arguments,
             IProgress<string>? log,
             CancellationToken cancellationToken)
         {
-            Calls.Add(arguments);
+            lock (Calls)
+            {
+                Calls.Add(arguments);
+            }
+
+            if (arguments.Any(arg => arg.Contains("view_count", StringComparison.Ordinal)))
+            {
+                foreach (var line in CatalogLines)
+                {
+                    log?.Report(line);
+                }
+
+                return new YtDlpRunResult(0, false, null);
+            }
+
             if (arguments.Contains("--print"))
             {
                 return ProbeCookieDead

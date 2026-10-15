@@ -12,6 +12,14 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(ViewEdition)' == 'true'">
+    <DefineConstants>$(DefineConstants);HD_VIEW_EDITION</DefineConstants>
+    <AssemblyName>HdDownloaderView</AssemblyName>
+    <Version>1.1.0</Version>
+    <AssemblyVersion>1.1.0.0</AssemblyVersion>
+    <FileVersion>1.1.0.0</FileVersion>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\VideoAutoTool.Core\VideoAutoTool.Core.csproj" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
