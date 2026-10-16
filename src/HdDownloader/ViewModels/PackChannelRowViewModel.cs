@@ -10,6 +10,7 @@ public partial class PackChannelRowViewModel : ObservableObject
     private int _videoCount;
     private int _thumbCount;
     private string _root = "";
+    private bool _downloadSubtitles;
 
     [ObservableProperty]
     private string _folderName = "HD036";
@@ -53,13 +54,20 @@ public partial class PackChannelRowViewModel : ObservableObject
             }
 
             var folder = Path.Combine(_root.Trim(), FolderName.Trim());
-            return folder + @"\video    ·    " + folder + @"\thumb";
+            var sub = _downloadSubtitles ? @"    ·    " + folder + @"\sub" : "";
+            return folder + @"\video    ·    " + folder + @"\thumb" + sub;
         }
     }
 
     public void SetRoot(string root)
     {
         _root = root ?? "";
+        OnPropertyChanged(nameof(LayoutText));
+    }
+
+    public void SetDownloadSubtitles(bool enabled)
+    {
+        _downloadSubtitles = enabled;
         OnPropertyChanged(nameof(LayoutText));
     }
 

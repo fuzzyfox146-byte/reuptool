@@ -4,8 +4,29 @@ public static class PackToolLocator
 {
     public static string? FindYtDlp()
     {
+        var beside = Path.Combine(ExeDirectory(), "yt-dlp.exe");
+        if (File.Exists(beside))
+        {
+            return beside;
+        }
+
         var candidate = Path.Combine(@"D:\Tải video", "yt-dlp.exe");
         return File.Exists(candidate) ? candidate : null;
+    }
+
+    static string ExeDirectory()
+    {
+        var path = Environment.ProcessPath;
+        if (!string.IsNullOrWhiteSpace(path))
+        {
+            var dir = Path.GetDirectoryName(path);
+            if (!string.IsNullOrWhiteSpace(dir))
+            {
+                return dir;
+            }
+        }
+
+        return AppContext.BaseDirectory;
     }
 
     public static string? FindCookies(string? ytDlpPath)

@@ -1,3 +1,5 @@
+using VideoAutoTool.Core.Ffmpeg;
+
 namespace VideoAutoTool.Core.Download;
 
 public sealed class PackDownloader
@@ -83,11 +85,22 @@ public sealed class PackDownloader
 
             var videoDir = PackFolders.Video(folder);
             var thumbDir = PackFolders.Thumb(folder);
+            var subDir = PackFolders.Sub(folder);
             Directory.CreateDirectory(videoDir);
             Directory.CreateDirectory(thumbDir);
             Directory.CreateDirectory(PackFolders.Temp(folder));
+            if (request.DownloadSubtitles)
+            {
+                Directory.CreateDirectory(subDir);
+            }
 
             var label = request.FolderName.Trim();
+            var firstNumber = request.NameStart;
+            var lastNumber = request.NameStart + (request.PlaylistEnd - request.PlaylistStart);
+            var parked = await ParkVideosPremiereCannotOpenAsync(
+                tools, videoDir, label, folder, firstNumber, lastNumber, log, linked.Token).ConfigureAwait(false);
+            try
+            {
             IReadOnlyList<PackItem> pending;
             if (request.OrderByViews)
             {
@@ -104,17 +117,20 @@ public sealed class PackDownloader
                     return;
                 }
 
-                pending = PackFolders.PendingRanked(videoDir, thumbDir, request, ranked.Entries);
+                pending = PackFolders.PendingRanked(videoDir, thumbDir, request, ranked.Entries, subDir);
             }
             else
             {
-                pending = PackFolders.Pending(videoDir, thumbDir, request);
+                pending = PackFolders.Pending(videoDir, thumbDir, request, subDir);
             }
 
             if (pending.Count == 0)
             {
-                log?.Report(new DownloadNotice(null, $"{label}  đã có đủ video và thumb, không tải lại.", folder));
-                set(new PackDownloadResult(folder, DownloadStop.Completed, "Đã có đủ video và thumb, không tải lại."));
+                var done = request.DownloadSubtitles
+                    ? $"{label}  đã có đủ video, thumb và phụ đề, không tải lại."
+                    : $"{label}  đã có đủ video và thumb, không tải lại.";
+                log?.Report(new DownloadNotice(null, done, folder));
+                set(new PackDownloadResult(folder, DownloadStop.Completed, done));
                 return;
             }
 
@@ -172,7 +188,22 @@ public sealed class PackDownloader
             set(new PackDownloadResult(
                 folder,
                 DownloadStop.Completed,
-                $"Xong {label}. Video và thumb đánh số từ {request.NameStart:000}. Không tải phụ đề."));
+                request.DownloadSubtitles
+                    ? $"Xong {label}. Video, thumb và phụ đề đánh số từ {request.NameStart:000}."
+                    : $"Xong {label}. Video và thumb đánh số từ {request.NameStart:000}. Không tải phụ đề."));
+            }
+            finally
+            {
+                if (request.DownloadSubtitles)
+                {
+                    for (var number = firstNumber; number <= lastNumber; number++)
+                    {
+                        DeleteDuplicateSubtitles(subDir, number, request.SubtitleLanguages);
+                    }
+                }
+
+                await FinishParkedVideosAsync(tools, parked, log, CancellationToken.None).ConfigureAwait(false);
+            }
         }
         catch (OperationCanceledException)
         {
@@ -251,6 +282,55 @@ public sealed class PackDownloader
                 }
             }
 
+            if (item.NeedSub && !linked.IsCancellationRequested)
+            {
+                var videoId = item.VideoId is { Length: > 0 } ? item.VideoId : null;
+                var sub = await RunLoggedAsync(
+                    tools,
+                    videoId is not null
+                        ? PackPlan.SubById(tools, request, videoId, item.Number)
+                        : PackPlan.Sub(tools, request, item.PlaylistIndex, item.Number),
+                    new DownloadActivityLog(log, "Sub", folder),
+                    linked.Token).ConfigureAwait(false);
+                if (sub.CookieDead)
+                {
+                    markCookie();
+                    linked.Cancel();
+                    return sub;
+                }
+
+                var subDir = PackFolders.Sub(folder);
+                FinishSubtitleFiles(subDir);
+                var fallbackLangs = PackSubtitleLanguages.OrigFallback(
+                    PackSubtitleLanguages.Missing(subDir, item.Number, request.SubtitleLanguages));
+                if (fallbackLangs.Length > 0 && !linked.IsCancellationRequested)
+                {
+                    log?.Report(new DownloadNotice(null, $"{request.FolderName.Trim()}  {item.Number:000} không có phụ đề đã chọn, lấy phụ đề gốc của video.", folder));
+                    var fallback = await RunLoggedAsync(
+                        tools,
+                        videoId is not null
+                            ? PackPlan.SubById(tools, request, videoId, item.Number, fallbackLangs)
+                            : PackPlan.Sub(tools, request, item.PlaylistIndex, item.Number, fallbackLangs),
+                        new DownloadActivityLog(log, "Sub", folder),
+                        linked.Token).ConfigureAwait(false);
+                    if (fallback.CookieDead)
+                    {
+                        markCookie();
+                        linked.Cancel();
+                        return fallback;
+                    }
+
+                    FinishSubtitleFiles(subDir);
+                }
+
+                DeleteDuplicateSubtitles(subDir, item.Number, request.SubtitleLanguages);
+
+                if (!DownloadResume.HasCompleted(subDir, item.Number, DownloadResume.IsSubtitleFile))
+                {
+                    log?.Report(new DownloadNotice(null, $"{request.FolderName.Trim()}  {item.Number:000} không có phụ đề.", folder));
+                }
+            }
+
             return new YtDlpRunResult(exit, false, null);
         }
         catch (OperationCanceledException)
@@ -277,11 +357,11 @@ public sealed class PackDownloader
         IProgress<DownloadNotice>? log,
         CancellationToken cancellationToken)
     {
-        var lines = new List<string>();
+        var lines = new LineCollector();
         var catalog = await _runner.RunAsync(
             tools.YtDlpPath,
             PackPlan.ViewCatalog(tools, request),
-            new Progress<string>(lines.Add),
+            lines,
             cancellationToken).ConfigureAwait(false);
         if (catalog.CookieDead)
         {
@@ -293,7 +373,7 @@ public sealed class PackDownloader
             return ([], new PackDownloadResult(PackFolders.Channel(request), DownloadStop.Failed, "Không đọc được view của kênh. Đã dừng trước khi tải."));
         }
 
-        var ranked = PackViewRank.Order(PackViewRank.Parse(lines));
+        var ranked = PackViewRank.Order(PackViewRank.Parse(lines.Lines));
         if (ranked.Count < request.PlaylistEnd)
         {
             return ([], new PackDownloadResult(
@@ -318,6 +398,223 @@ public sealed class PackDownloader
         }
 
         return (ranked, null);
+    }
+
+    private sealed class LineCollector : IProgress<string>
+    {
+        public List<string> Lines { get; } = [];
+
+        public void Report(string value) => Lines.Add(value);
+    }
+
+    private const string ParkSuffix = ".premiere-old";
+
+    private static void FinishSubtitleFiles(string folder)
+    {
+        Json3ToSrt.ConvertFolder(folder, log: null);
+        VttToSrt.ConvertFolder(folder);
+    }
+
+    private static void DeleteDuplicateSubtitles(string folder, int number, string? languages)
+    {
+        if (!Directory.Exists(folder))
+        {
+            return;
+        }
+
+        foreach (var name in PackSubtitleLanguages.DuplicateNames(Directory.EnumerateFiles(folder).Select(Path.GetFileName)!, number, languages))
+        {
+            TryDelete(Path.Combine(folder, name!));
+        }
+    }
+
+    private async Task<List<string>> ParkVideosPremiereCannotOpenAsync(
+        DownloadTools tools,
+        string videoDir,
+        string label,
+        string folder,
+        int firstNumber,
+        int lastNumber,
+        IProgress<DownloadNotice>? log,
+        CancellationToken cancellationToken)
+    {
+        var parked = new List<string>();
+        if (!Directory.Exists(videoDir))
+        {
+            return parked;
+        }
+
+        foreach (var leftover in Directory.EnumerateFiles(videoDir, "*" + ParkSuffix).ToList())
+        {
+            var original = leftover[..^ParkSuffix.Length];
+            if (!File.Exists(original))
+            {
+                TryMove(leftover, original);
+            }
+        }
+
+        foreach (var path in Directory.EnumerateFiles(videoDir).ToList())
+        {
+            var fileName = Path.GetFileName(path);
+            var number = LeadingNumber(fileName);
+            if (!DownloadResume.IsVideoFile(fileName) || number is null || number < firstNumber || number > lastNumber)
+            {
+                continue;
+            }
+
+            if (await PremiereReadyAsync(tools, path, cancellationToken).ConfigureAwait(false) != false)
+            {
+                continue;
+            }
+
+            var aside = path + ParkSuffix;
+            if (TryMove(path, aside))
+            {
+                parked.Add(aside);
+                log?.Report(new DownloadNotice(null, $"{label}  {Path.GetFileName(path)} Premiere không mở được, tải lại H.264.", folder));
+            }
+        }
+
+        return parked;
+    }
+
+    private async Task FinishParkedVideosAsync(
+        DownloadTools tools,
+        IReadOnlyList<string> parked,
+        IProgress<DownloadNotice>? log,
+        CancellationToken cancellationToken)
+    {
+        foreach (var aside in parked)
+        {
+            var original = aside[..^ParkSuffix.Length];
+            if (File.Exists(original) && await PremiereReadyAsync(tools, original, cancellationToken).ConfigureAwait(false) == true)
+            {
+                TryDelete(aside);
+                continue;
+            }
+
+            if (!File.Exists(original))
+            {
+                TryMove(aside, original);
+            }
+            else
+            {
+                TryDelete(aside);
+            }
+
+            if (await PremiereReadyAsync(tools, original, cancellationToken).ConfigureAwait(false) == false)
+            {
+                await TranscodeForPremiereAsync(tools, original, log, cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private async Task TranscodeForPremiereAsync(
+        DownloadTools tools,
+        string path,
+        IProgress<DownloadNotice>? log,
+        CancellationToken cancellationToken)
+    {
+        var runner = MediaRunner(tools);
+        if (runner is null || !File.Exists(path))
+        {
+            return;
+        }
+
+        var output = path + ".h264.mp4";
+        log?.Report(new DownloadNotice(null, Path.GetFileName(path) + " đang chuyển sang H.264 để Premiere mở được.", null));
+        try
+        {
+            var result = await runner.RunAsync(PremiereVideo.TranscodeArgs(path, output), workingDirectory: null, cancellationToken).ConfigureAwait(false);
+            if (result.ExitCode != 0 || !File.Exists(output))
+            {
+                TryDelete(output);
+                return;
+            }
+
+            TryDelete(path);
+            TryMove(output, path);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            TryDelete(output);
+        }
+    }
+
+    private static async Task<bool?> PremiereReadyAsync(DownloadTools tools, string path, CancellationToken cancellationToken)
+    {
+        var runner = MediaRunner(tools);
+        if (runner is null || !File.Exists(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            var result = await runner.ProbeAsync(PremiereVideo.ProbeArgs(path), cancellationToken).ConfigureAwait(false);
+            return PremiereVideo.IsReady(result.StandardOutput);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return null;
+        }
+    }
+
+    private static FfmpegRunner? MediaRunner(DownloadTools tools)
+    {
+        var dir = tools.FfmpegLocation ?? "";
+        var ffmpeg = Path.Combine(dir, "ffmpeg.exe");
+        var ffprobe = Path.Combine(dir, "ffprobe.exe");
+        if (!File.Exists(ffmpeg) || !File.Exists(ffprobe))
+        {
+            return null;
+        }
+
+        return new FfmpegRunner(new FfmpegPaths(ffmpeg, ffprobe, null));
+    }
+
+    private static bool TryMove(string from, string to)
+    {
+        try
+        {
+            if (File.Exists(to))
+            {
+                File.Delete(to);
+            }
+
+            File.Move(from, to);
+            return true;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+    }
+
+    private static int? LeadingNumber(string name)
+    {
+        var end = 0;
+        while (end < name.Length && char.IsDigit(name[end]))
+        {
+            end++;
+        }
+
+        return end > 0 && int.TryParse(name[..end], out var number) ? number : null;
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch (IOException)
+        {
+            // The file is open in another program.
+        }
     }
 
     private static PackDownloadResult Cookie(string folder, string? line)

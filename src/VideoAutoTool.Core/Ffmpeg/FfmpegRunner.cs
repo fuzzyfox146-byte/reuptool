@@ -21,4 +21,9 @@ public sealed class FfmpegRunner
             progress,
             totalDurationSeconds,
             stallWatchPath);
+
+    public Task<FfmpegResult> ProbeAsync(
+        IReadOnlyList<string> arguments,
+        CancellationToken cancellationToken) =>
+        FfmpegProcessRunner.RunAsync(_paths.FfprobePath, arguments, workingDirectory: null, cancellationToken);
 }

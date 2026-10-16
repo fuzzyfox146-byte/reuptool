@@ -13,6 +13,6 @@ public static class VideoQuality
             _ => "144"
         };
 
-        return "bestvideo[vcodec=avc1][height<=" + height + "]+bestaudio[ext=m4a]/bestvideo[height<=" + height + "]+bestaudio/best[height<=" + height + "]/best";
+        return "bestvideo[vcodec^=avc1][height<=" + height + "]+bestaudio[acodec^=mp4a]/bestvideo[vcodec^=avc1][height<=" + height + "]+bestaudio[ext=m4a]/best[vcodec^=avc1][height<=" + height + "]";
     }
 }

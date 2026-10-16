@@ -8,17 +8,26 @@ public sealed record PackChannelRequest(
     int PlaylistEnd,
     int NameStart,
     string Quality,
-    bool OrderByViews = false);
+    bool OrderByViews = false,
+    bool DownloadSubtitles = false,
+    string SubtitleLanguages = "");
 
 public sealed record PackDownloadResult(string ChannelFolder, DownloadStop Stop, string Detail);
 
-public sealed record PackItem(int PlaylistIndex, int Number, bool NeedVideo, bool NeedThumb, string? VideoId = null);
+public sealed record PackItem(
+    int PlaylistIndex,
+    int Number,
+    bool NeedVideo,
+    bool NeedThumb,
+    string? VideoId = null,
+    bool NeedSub = false);
 
 public static class PackFolders
 {
     public const string VideoFolder = "video";
     public const string ThumbFolder = "thumb";
     public const string TempFolder = "temp";
+    public const string SubFolder = "sub";
 
     public static string? InvalidName(string? folderName)
     {
@@ -59,7 +68,9 @@ public static class PackFolders
 
     public static string Temp(string channelFolder) => Path.Combine(channelFolder, TempFolder);
 
-    public static IReadOnlyList<PackItem> Pending(string videoDir, string thumbDir, PackChannelRequest request)
+    public static string Sub(string channelFolder) => Path.Combine(channelFolder, SubFolder);
+
+    public static IReadOnlyList<PackItem> Pending(string videoDir, string thumbDir, PackChannelRequest request, string? subDir = null)
     {
         var items = new List<PackItem>();
         for (var index = request.PlaylistStart; index <= request.PlaylistEnd; index++)
@@ -67,9 +78,10 @@ public static class PackFolders
             var number = request.NameStart + (index - request.PlaylistStart);
             var needVideo = !DownloadResume.HasCompleted(videoDir, number, DownloadResume.IsVideoFile);
             var needThumb = !DownloadResume.HasCompleted(thumbDir, number, DownloadResume.IsThumbnailFile);
-            if (needVideo || needThumb)
+            var needSub = NeedsSub(subDir, request, number);
+            if (needVideo || needThumb || needSub)
             {
-                items.Add(new PackItem(index, number, needVideo, needThumb));
+                items.Add(new PackItem(index, number, needVideo, needThumb, NeedSub: needSub));
             }
         }
 
@@ -80,7 +92,8 @@ public static class PackFolders
         string videoDir,
         string thumbDir,
         PackChannelRequest request,
-        IReadOnlyList<PackViewEntry> ranked)
+        IReadOnlyList<PackViewEntry> ranked,
+        string? subDir = null)
     {
         var items = new List<PackItem>();
         for (var rank = request.PlaylistStart; rank <= request.PlaylistEnd; rank++)
@@ -89,12 +102,18 @@ public static class PackFolders
             var number = request.NameStart + (rank - request.PlaylistStart);
             var needVideo = !DownloadResume.HasCompleted(videoDir, number, DownloadResume.IsVideoFile);
             var needThumb = !DownloadResume.HasCompleted(thumbDir, number, DownloadResume.IsThumbnailFile);
-            if (needVideo || needThumb)
+            var needSub = NeedsSub(subDir, request, number);
+            if (needVideo || needThumb || needSub)
             {
-                items.Add(new PackItem(entry.PlaylistIndex, number, needVideo, needThumb, entry.Id));
+                items.Add(new PackItem(entry.PlaylistIndex, number, needVideo, needThumb, entry.Id, needSub));
             }
         }
 
         return items;
     }
+
+    static bool NeedsSub(string? subDir, PackChannelRequest request, int number) =>
+        request.DownloadSubtitles
+        && !string.IsNullOrWhiteSpace(subDir)
+        && PackSubtitleLanguages.Missing(subDir, number, request.SubtitleLanguages).Count > 0;
 }

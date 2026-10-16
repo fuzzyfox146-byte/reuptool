@@ -16,6 +16,10 @@ public sealed class PackSettings
 
     public bool OrderByViews { get; set; } = PackSettingsStore.DefaultOrderByViews;
 
+    public bool DownloadSubtitles { get; set; } = PackSettingsStore.DefaultDownloadSubtitles;
+
+    public string SubtitleLanguages { get; set; } = "en,ja,pt";
+
     public List<PackChannelSettings> Channels { get; set; } = [];
 }
 
@@ -40,6 +44,8 @@ public static class PackSettingsStore
 
     public static bool DefaultOrderByViews { get; set; }
 
+    public static bool DefaultDownloadSubtitles { get; set; }
+
     public static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         AppFolder,
@@ -54,7 +60,19 @@ public static class PackSettingsStore
                 return new PackSettings();
             }
 
-            return JsonSerializer.Deserialize<PackSettings>(File.ReadAllText(FilePath)) ?? new PackSettings();
+            var json = File.ReadAllText(FilePath);
+            var settings = JsonSerializer.Deserialize<PackSettings>(json) ?? new PackSettings();
+            if (DefaultDownloadSubtitles && !json.Contains("\"DownloadSubtitles\"", StringComparison.Ordinal))
+            {
+                settings.DownloadSubtitles = true;
+            }
+
+            if (string.IsNullOrWhiteSpace(settings.SubtitleLanguages))
+            {
+                settings.SubtitleLanguages = "en,ja,pt";
+            }
+
+            return settings;
         }
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException)
         {

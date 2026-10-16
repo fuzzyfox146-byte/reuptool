@@ -145,6 +145,65 @@ public static class PackPlan
         ]).ToList();
     }
 
+    public static IReadOnlyList<string> Sub(
+        DownloadTools tools,
+        PackChannelRequest request,
+        int playlistIndex,
+        int number) =>
+        SubArgs(tools, request, Target(tools, request, playlistIndex, number, videoId: null), languages: null);
+
+    public static IReadOnlyList<string> SubById(
+        DownloadTools tools,
+        PackChannelRequest request,
+        string videoId,
+        int number) =>
+        SubById(tools, request, videoId, number, languages: null);
+
+    public static IReadOnlyList<string> SubById(
+        DownloadTools tools,
+        PackChannelRequest request,
+        string videoId,
+        int number,
+        string? languages) =>
+        SubArgs(tools, request, Target(tools, request, playlistIndex: 0, number, videoId), languages);
+
+    public static IReadOnlyList<string> Sub(
+        DownloadTools tools,
+        PackChannelRequest request,
+        int playlistIndex,
+        int number,
+        string? languages) =>
+        SubArgs(tools, request, Target(tools, request, playlistIndex, number, videoId: null), languages);
+
+    static IReadOnlyList<string> SubArgs(
+        DownloadTools tools,
+        PackChannelRequest request,
+        IReadOnlyList<string> target,
+        string? languages)
+    {
+        var folder = PackFolders.Channel(request);
+        var sub = PackFolders.Sub(folder);
+        var langs = string.IsNullOrWhiteSpace(languages)
+            ? PackSubtitleLanguages.ForYtDlp(request.SubtitleLanguages)
+            : languages;
+        return target.Concat(
+        [
+            "--no-overwrites",
+            "--skip-download",
+            "--no-write-thumbnail",
+            "--write-subs",
+            "--write-auto-subs",
+            "--sub-langs", langs,
+            "--sub-format", "json3/vtt/best",
+            "--convert-subs", "srt",
+            "--ffmpeg-location", tools.FfmpegLocation,
+            "--newline",
+            "-P", "home:" + sub,
+            "-P", "subtitle:" + sub,
+            "-P", "temp:" + PackFolders.Temp(folder)
+        ]).ToList();
+    }
+
     private static IReadOnlyList<string> Target(
         DownloadTools tools,
         PackChannelRequest request,

@@ -168,6 +168,131 @@ public class PackDownloadTests
     }
 
     [Fact]
+    public async Task Subtitles_UseTheSameNumberAsTheVideo_InsideTheSubFolder()
+    {
+        using var home = new ToolHome();
+        var runner = new RecordingYtDlp
+        {
+            CatalogLines =
+            [
+                "aaaaaaaaaaa\t10\t1",
+                "bbbbbbbbbbb\t90\t2"
+            ]
+        };
+        var downloader = new PackDownloader(runner);
+        var request = new PackChannelRequest(
+            home.Root, "HD036", "https://www.youtube.com/@Chosen", 1, 1, 1, "720", true, true);
+
+        var result = await downloader.DownloadAsync(home.Tools, request, 1, null, CancellationToken.None);
+
+        Assert.Equal(DownloadStop.Completed, result.Stop);
+        var video = runner.Calls.Single(call => call.Contains("--merge-output-format"));
+        var sub = runner.Calls.First(call => call.Contains("--write-subs"));
+        var fallback = runner.Calls.Last(call => call.Contains("--write-subs"));
+        Assert.Contains("https://www.youtube.com/watch?v=bbbbbbbbbbb", video);
+        Assert.Contains("001 %(title).100s.%(ext)s", video);
+        Assert.Contains("https://www.youtube.com/watch?v=bbbbbbbbbbb", sub);
+        Assert.Contains("001 %(title).100s.%(ext)s", sub);
+        Assert.Contains(@"subtitle:" + Path.Combine(home.Root, "HD036", "sub"), sub);
+        Assert.Contains("--skip-download", sub);
+        Assert.Contains("ja", sub);
+        Assert.Contains("--convert-subs", sub);
+        Assert.Contains("ja-orig", fallback);
+        Assert.Contains("001 %(title).100s.%(ext)s", fallback);
+        Assert.DoesNotContain(video, arg => arg is "--write-subs" or "--write-auto-subs");
+    }
+
+    [Fact]
+    public void Quality_DownloadsH264_SoPremiereCanOpenTheFile()
+    {
+        var format = VideoQuality.Format("720");
+        Assert.Contains("vcodec^=avc1", format);
+        Assert.Contains("acodec^=mp4a", format);
+        Assert.DoesNotContain("bestvideo[height<=720]", format);
+    }
+
+    [Fact]
+    public void Premiere_RejectsAv1_AndAcceptsH264()
+    {
+        const string av1 = """{"streams":[{"codec_type":"video","codec_name":"av01","pix_fmt":"yuv420p"},{"codec_type":"audio","codec_name":"opus"}]}""";
+        const string h264 = """{"streams":[{"codec_type":"video","codec_name":"h264","pix_fmt":"yuv420p"},{"codec_type":"audio","codec_name":"aac"}]}""";
+        Assert.False(PremiereVideo.IsReady(av1));
+        Assert.True(PremiereVideo.IsReady(h264));
+        Assert.Null(PremiereVideo.IsReady("not json"));
+    }
+
+    [Fact]
+    public void Vtt_BecomesSrt_WithTheSameCueText()
+    {
+        var srt = VttToSrt.Convert("WEBVTT\n\n00:00:01.000 --> 00:00:04.000\nHello\n");
+        Assert.Contains("00:00:01,000 --> 00:00:04,000", srt);
+        Assert.Contains("Hello", srt);
+    }
+
+    [Fact]
+    public void SubtitleLanguages_AcceptsEnglishJapanesePortuguese_ByCodeOrName()
+    {
+        Assert.Equal("en,ja,pt", PackSubtitleLanguages.ForYtDlp("en, ja, pt"));
+        Assert.Equal("en,ja,pt", PackSubtitleLanguages.ForYtDlp("anh, nhật, bồ"));
+        Assert.Equal("en,ja,pt", PackSubtitleLanguages.ForYtDlp("tiếng Anh, tiếng Nhật, Bồ Đào Nha"));
+        Assert.Equal("all", PackSubtitleLanguages.ForYtDlp("tất cả"));
+        Assert.Equal("pt-br", PackSubtitleLanguages.ForYtDlp("pt-BR"));
+        Assert.Equal(
+            ["001 Title.en-orig.srt"],
+            PackSubtitleLanguages.DuplicateNames(
+                ["001 Title.en.srt", "001 Title.en-orig.srt", "001 Title.ja.srt"],
+                1,
+                "en,ja,pt"));
+    }
+
+    [Fact]
+    public async Task Subtitles_DownloadAMissingLanguage_EvenWhenAnotherLanguageExists()
+    {
+        using var home = new ToolHome();
+        var channel = Path.Combine(home.Root, "HD036");
+        Directory.CreateDirectory(Path.Combine(channel, "video"));
+        Directory.CreateDirectory(Path.Combine(channel, "thumb"));
+        Directory.CreateDirectory(Path.Combine(channel, "sub"));
+        File.WriteAllText(Path.Combine(channel, "video", "001 Title.mp4"), "v");
+        File.WriteAllText(Path.Combine(channel, "thumb", "001 Title.jpg"), "t");
+        File.WriteAllText(Path.Combine(channel, "sub", "001 Title.ja.srt"), "s");
+        var runner = new RecordingYtDlp();
+        var downloader = new PackDownloader(runner);
+        var request = new PackChannelRequest(
+            home.Root, "HD036", "https://www.youtube.com/@Chosen", 1, 1, 1, "720", false, true, "en,ja,pt");
+
+        var result = await downloader.DownloadAsync(home.Tools, request, 1, null, CancellationToken.None);
+
+        Assert.Equal(DownloadStop.Completed, result.Stop);
+        var sub = runner.Calls.First(call => call.Contains("--write-subs"));
+        Assert.Contains("en,ja,pt", sub);
+        Assert.Contains("en-orig,pt-orig", runner.Calls.Last(call => call.Contains("--write-subs")));
+        Assert.Contains("001 %(title).100s.%(ext)s", sub);
+        Assert.Contains(@"subtitle:" + Path.Combine(home.Root, "HD036", "sub"), sub);
+    }
+
+    [Fact]
+    public async Task Subtitles_SkipANumberThatAlreadyHasAnSrt()
+    {
+        using var home = new ToolHome();
+        var channel = Path.Combine(home.Root, "HD036");
+        Directory.CreateDirectory(Path.Combine(channel, "video"));
+        Directory.CreateDirectory(Path.Combine(channel, "thumb"));
+        Directory.CreateDirectory(Path.Combine(channel, "sub"));
+        File.WriteAllText(Path.Combine(channel, "video", "001 Title.mp4"), "v");
+        File.WriteAllText(Path.Combine(channel, "thumb", "001 Title.jpg"), "t");
+        File.WriteAllText(Path.Combine(channel, "sub", "001 Title.ja.srt"), "s");
+        var runner = new RecordingYtDlp();
+        var downloader = new PackDownloader(runner);
+        var request = new PackChannelRequest(home.Root, "HD036", "https://www.youtube.com/@Chosen", 1, 1, 1, "720", false, true);
+
+        var result = await downloader.DownloadAsync(home.Tools, request, 1, null, CancellationToken.None);
+
+        Assert.Equal(DownloadStop.Completed, result.Stop);
+        Assert.Empty(runner.Calls);
+    }
+
+    [Fact]
     public async Task ViewOrder_FailsWhenTheChannelHasFewerVideosThanTheRank()
     {
         using var home = new ToolHome();

@@ -88,7 +88,7 @@
     <value>Đặt tên folder HD036, dán link kênh, chọn 720p rồi bấm Tải.</value>
   </data>
   <data name="Busy" xml:space="preserve">
-    <value>Đang tải video và thumb. Không tải phụ đề.</value>
+    <value>Đang tải.</value>
   </data>
   <data name="Ready" xml:space="preserve">
     <value>Xong lượt này. File đã có sẽ không tải lại.</value>
@@ -131,5 +131,56 @@
   </data>
   <data name="ByViews" xml:space="preserve">
     <value>Theo view, cao xuống thấp</value>
+  </data>
+  <data name="DownloadSubtitles" xml:space="preserve">
+    <value>Tải phụ đề vào folder sub</value>
+  </data>
+  <data name="SubtitleLanguages" xml:space="preserve">
+    <value>Ngôn ngữ phụ đề</value>
+  </data>
+  <data name="SubLangEnJaPt" xml:space="preserve">
+    <value>Anh, Nhật, Bồ</value>
+  </data>
+  <data name="SubLangEn" xml:space="preserve">
+    <value>Anh</value>
+  </data>
+  <data name="SubLangJa" xml:space="preserve">
+    <value>Nhật</value>
+  </data>
+  <data name="SubLangPt" xml:space="preserve">
+    <value>Bồ</value>
+  </data>
+  <data name="SubLangEnJa" xml:space="preserve">
+    <value>Anh, Nhật</value>
+  </data>
+  <data name="SubLangJaPt" xml:space="preserve">
+    <value>Nhật, Bồ</value>
+  </data>
+  <data name="SubLangEnPt" xml:space="preserve">
+    <value>Anh, Bồ</value>
+  </data>
+  <data name="SubLangKo" xml:space="preserve">
+    <value>Hàn</value>
+  </data>
+  <data name="SubLangZh" xml:space="preserve">
+    <value>Trung</value>
+  </data>
+  <data name="SubLangEs" xml:space="preserve">
+    <value>Tây Ban Nha</value>
+  </data>
+  <data name="SubLangFr" xml:space="preserve">
+    <value>Pháp</value>
+  </data>
+  <data name="SubLangDe" xml:space="preserve">
+    <value>Đức</value>
+  </data>
+  <data name="SubLangVi" xml:space="preserve">
+    <value>Việt</value>
+  </data>
+  <data name="SubLangTh" xml:space="preserve">
+    <value>Thái</value>
+  </data>
+  <data name="SubLangAll" xml:space="preserve">
+    <value>Tất cả</value>
   </data>
 </root>

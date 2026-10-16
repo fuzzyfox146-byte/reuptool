@@ -65,6 +65,19 @@
                               Content="{x:Static t:UiText.ByViews}"
                               IsChecked="{Binding OrderByViews}"
                               Visibility="{Binding ViewOrderVisibility}"/>
+                    <CheckBox Margin="16,22,0,0" VerticalAlignment="Bottom"
+                              Content="{x:Static t:UiText.DownloadSubtitles}"
+                              IsChecked="{Binding DownloadSubtitles}"
+                              Visibility="{Binding ViewOrderVisibility}"/>
+                    <StackPanel Margin="16,0,0,0" VerticalAlignment="Bottom"
+                                Visibility="{Binding ViewOrderVisibility}">
+                        <Label Content="{x:Static t:UiText.SubtitleLanguages}"/>
+                        <ComboBox Width="150" HorizontalAlignment="Left"
+                                  ItemsSource="{Binding SubtitleLanguageOptions}"
+                                  DisplayMemberPath="Label"
+                                  SelectedValuePath="Id"
+                                  SelectedValue="{Binding SubtitleLanguages}"/>
+                    </StackPanel>
                 </DockPanel>
             </StackPanel>
             <StackPanel Grid.Column="1">

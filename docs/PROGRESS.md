@@ -8,6 +8,12 @@
 - Git: branch `gpu-render`. Fix lệch số thumb/sub/video + render hợp lệ đã publish `publish-2.1.3-opt`.
 
 ## Done
+- Tải video theo view: một số chỉ còn một file phụ đề. `en` và `en-orig` không được giữ cả hai. Ô ngôn ngữ hiện tên (Anh, Nhật, Bồ), không hiện tên class. Bản mang máy: `C:\HdDownloaderView-5`.
+- Tải video theo view: phụ đề thiếu thì lấy phụ đề gốc của video, cùng số với video. Video tải H.264 + AAC để Premiere mở được. File AV1 đã tải thì bấm Tải lại, app tải lại hoặc chuyển sang H.264.
+- Tải video theo view: danh sách thả xuống (chất lượng, số video, ngôn ngữ phụ đề) nền tối, chữ trắng.
+- Tải video theo view: **Ngôn ngữ phụ đề** là danh sách thả xuống. Mặc định Anh, Nhật, Bồ. Có từng ngôn ngữ, vài bộ kết hợp, và Tất cả. Mỗi file vẫn cùng số với video.
+- Tải video theo view có ô **Tải phụ đề vào folder sub**, bật sẵn. Phụ đề ghi cùng số với video: video `001` thì file trong `sub` cũng `001`.
+- Tải video theo view, bản mang máy: `C:\HdDownloaderView`. Một exe tự chứa .NET, kèm `yt-dlp.exe`, `ffmpeg.exe`, `ffprobe.exe`, `cookies.txt`. Zip cả folder rồi mở exe trên máy khác. Ổ D hết chỗ nên folder nằm trên C.
 - YouTube Folder Uploader: hết hạn mức thumbnail thì hàng đợi đổi ngày công khai ngay, không giữ ngày cũ. Exe: `Upload video\app-daily-16\YtFolderUploader.exe`.
 - YouTube Folder Uploader: trước khi đăng thì thử gắn thumbnail. Không gắn được thì dừng cả lượt, không đăng thêm, và đẩy ngày công khai sang ngày sau. Exe: `Upload video\app-daily-15\YtFolderUploader.exe`.
 - Tải video theo view: app riêng `publish-hd-view\HdDownloaderView.exe`, cấu hình `%AppData%\HdDownloaderView`. Ô **Theo view, cao xuống thấp** bật sẵn. Trong khoảng Từ–Đến, video nhiều view nhất ghi số ở ô Số (1 thành 001), rồi giảm dần. Bản `HdDownloader` hiện tại không có ô này và vẫn theo thứ tự kênh.

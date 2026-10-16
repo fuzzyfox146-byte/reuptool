@@ -27,6 +27,24 @@ public partial class PackDownloadViewModel : ObservableObject
             new PackQualityOption("1080", "1080p")
         ];
         ParallelOptions = [1, 2, 3, 4];
+        SubtitleLanguageOptions =
+        [
+            new PackQualityOption("en,ja,pt", UiText.SubLangEnJaPt),
+            new PackQualityOption("en", UiText.SubLangEn),
+            new PackQualityOption("ja", UiText.SubLangJa),
+            new PackQualityOption("pt", UiText.SubLangPt),
+            new PackQualityOption("en,ja", UiText.SubLangEnJa),
+            new PackQualityOption("ja,pt", UiText.SubLangJaPt),
+            new PackQualityOption("en,pt", UiText.SubLangEnPt),
+            new PackQualityOption("ko", UiText.SubLangKo),
+            new PackQualityOption("zh", UiText.SubLangZh),
+            new PackQualityOption("es", UiText.SubLangEs),
+            new PackQualityOption("fr", UiText.SubLangFr),
+            new PackQualityOption("de", UiText.SubLangDe),
+            new PackQualityOption("vi", UiText.SubLangVi),
+            new PackQualityOption("th", UiText.SubLangTh),
+            new PackQualityOption("all", UiText.SubLangAll)
+        ];
         Load();
     }
 
@@ -37,6 +55,8 @@ public partial class PackDownloadViewModel : ObservableObject
     public IReadOnlyList<PackQualityOption> QualityOptions { get; }
 
     public IReadOnlyList<int> ParallelOptions { get; }
+
+    public IReadOnlyList<PackQualityOption> SubtitleLanguageOptions { get; }
 
     [ObservableProperty]
     private string _ytDlpPath = "";
@@ -55,6 +75,12 @@ public partial class PackDownloadViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _orderByViews = PackSettingsStore.DefaultOrderByViews;
+
+    [ObservableProperty]
+    private bool _downloadSubtitles = PackSettingsStore.DefaultDownloadSubtitles;
+
+    [ObservableProperty]
+    private string _subtitleLanguages = "en,ja,pt";
 
     public Visibility ViewOrderVisibility { get; } =
 #if HD_VIEW_EDITION
@@ -262,7 +288,9 @@ public partial class PackDownloadViewModel : ObservableObject
                 row.PlaylistEnd,
                 row.NameStart,
                 Quality,
-                OrderByViews);
+                OrderByViews,
+                DownloadSubtitles,
+                SubtitleLanguages);
             requests.Add(request);
             selected.Add(row);
             row.ResetProgress();
@@ -354,7 +382,7 @@ public partial class PackDownloadViewModel : ObservableObject
     }
 
     private PackChannelRequest ToRequest(PackChannelRowViewModel row) =>
-        new(RootFolder, row.FolderName, row.ChannelUrl, row.PlaylistStart, row.PlaylistEnd, row.NameStart, Quality, OrderByViews);
+        new(RootFolder, row.FolderName, row.ChannelUrl, row.PlaylistStart, row.PlaylistEnd, row.NameStart, Quality, OrderByViews, DownloadSubtitles, SubtitleLanguages);
 
     private void Load()
     {
@@ -370,6 +398,10 @@ public partial class PackDownloadViewModel : ObservableObject
             Quality = saved.Quality is "144" or "360" or "480" or "720" or "1080" ? saved.Quality : "720";
             Parallel = Math.Clamp(saved.Parallel == 0 ? 3 : saved.Parallel, 1, PackDownloader.MaxParallel);
             OrderByViews = saved.OrderByViews;
+            DownloadSubtitles = saved.DownloadSubtitles;
+            SubtitleLanguages = SubtitleLanguageOptions.Any(option => option.Id == saved.SubtitleLanguages)
+                ? saved.SubtitleLanguages
+                : "en,ja,pt";
             Channels.Clear();
             foreach (var channel in saved.Channels)
             {
@@ -406,6 +438,8 @@ public partial class PackDownloadViewModel : ObservableObject
         Quality = Quality,
         Parallel = Parallel,
         OrderByViews = OrderByViews,
+        DownloadSubtitles = DownloadSubtitles,
+        SubtitleLanguages = SubtitleLanguages,
         Channels = Channels.Select(row => new PackChannelSettings
         {
             FolderName = row.FolderName,
@@ -420,6 +454,7 @@ public partial class PackDownloadViewModel : ObservableObject
     {
         var row = new PackChannelRowViewModel();
         row.SetRoot(RootFolder);
+        row.SetDownloadSubtitles(DownloadSubtitles);
         row.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName is nameof(PackChannelRowViewModel.FolderName)
@@ -435,6 +470,27 @@ public partial class PackDownloadViewModel : ObservableObject
     }
 
     partial void OnOrderByViewsChanged(bool value) => Persist();
+
+    partial void OnDownloadSubtitlesChanged(bool value)
+    {
+        foreach (var row in Channels)
+        {
+            row.SetDownloadSubtitles(value);
+        }
+
+        Persist();
+    }
+
+    partial void OnSubtitleLanguagesChanged(string value)
+    {
+        if (SubtitleLanguageOptions.All(option => option.Id != value))
+        {
+            SubtitleLanguages = "en,ja,pt";
+            return;
+        }
+
+        Persist();
+    }
 
     private void Persist()
     {
@@ -505,4 +561,7 @@ public partial class PackDownloadViewModel : ObservableObject
     }
 }
 
-public sealed record PackQualityOption(string Id, string Label);
+public sealed record PackQualityOption(string Id, string Label)
+{
+    public override string ToString() => Label;
+}
