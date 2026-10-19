@@ -201,6 +201,9 @@ public class UploaderTests
         Assert.True(already.DayAlreadySet);
         Assert.Empty(already.Times);
         Assert.False(already.ShortSource);
+        Assert.True(SchedulePlanner.HasUploadOnTargetDay(options, used, now));
+        var laterDay = new DateTimeOffset(2026, 10, 16, 10, 0, 0, TimeSpan.FromHours(7));
+        Assert.False(SchedulePlanner.HasUploadOnTargetDay(options, [laterDay], now));
     }
 
     [Fact]
@@ -445,6 +448,25 @@ public class UploaderTests
         Assert.False(AutoScheduleGate.IsDue(userStarted: true, enabled: true, exactDaily: true, stopped: false, alreadyDone: true));
         Assert.False(AutoScheduleGate.IsDue(userStarted: true, enabled: true, exactDaily: true, stopped: true, alreadyDone: false));
     }
+
+    [Fact]
+    public void DayBatch_UploadsTheTopChannelBeforeTheOneBelow()
+    {
+        var jobs = new[]
+        {
+            new BatchJob("bottom", new DateTimeOffset(2026, 10, 19, 8, 30, 0, TimeSpan.FromHours(7)), "001"),
+            new BatchJob("top", new DateTimeOffset(2026, 10, 19, 21, 0, 0, TimeSpan.FromHours(7)), "002"),
+            new BatchJob("top", new DateTimeOffset(2026, 10, 19, 8, 30, 0, TimeSpan.FromHours(7)), "001")
+        };
+
+        var ordered = ChannelQueueOrder.InListOrder(jobs, ["top", "bottom"], job => job.ChannelId, job => job.When, job => job.Index);
+
+        Assert.Equal(["top", "top", "bottom"], ordered.Select(job => job.ChannelId).ToArray());
+        Assert.Equal("001", ordered[0].Index);
+        Assert.Equal("002", ordered[1].Index);
+    }
+
+    sealed record BatchJob(string ChannelId, DateTimeOffset When, string Index);
 
     static UploadOptions SampleOptions(int perDay)
     {

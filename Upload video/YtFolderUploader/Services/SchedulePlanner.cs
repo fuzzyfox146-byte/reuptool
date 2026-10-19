@@ -67,6 +67,17 @@ public static class SchedulePlanner
         return day;
     }
 
+    public static bool HasUploadOnTargetDay(
+        UploadOptions options,
+        IEnumerable<DateTimeOffset> used,
+        DateTimeOffset now,
+        DateOnly? notBefore = null)
+    {
+        var day = TargetDay(options, now, notBefore);
+        var zone = TimeZones.Resolve(options.TimeZoneId);
+        return used.Any(time => DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(time, zone).DateTime) == day);
+    }
+
     public static SchedulePlan PlanOneDayAhead(
         int count,
         UploadOptions options,

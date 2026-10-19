@@ -8,6 +8,8 @@
 - Git: branch `gpu-render`. Fix lệch số thumb/sub/video + render hợp lệ đã publish `publish-2.1.3-opt`.
 
 ## Done
+- YouTube Folder Uploader: nút **Đăng hết ngày mai** bỏ qua kênh đã có lịch ngày mai và ghi log, không đăng thêm. Kênh thiếu video cũng bỏ qua. Exe: `Upload video\app-daily-18\YtFolderUploader.exe`.
+- YouTube Folder Uploader: nút **Đăng hết ngày mai** đăng lần lượt từ kênh trên xuống dưới, không đăng cùng lúc. Nút **Xóa video đã đăng mọi kênh** xóa file local đã đăng, video trên YouTube vẫn còn. Exe: `Upload video\app-daily-17\YtFolderUploader.exe`.
 - Tải video theo view: một số chỉ còn một file phụ đề. `en` và `en-orig` không được giữ cả hai. Ô ngôn ngữ hiện tên (Anh, Nhật, Bồ), không hiện tên class. Bản mang máy: `C:\HdDownloaderView-5`.
 - Tải video theo view: phụ đề thiếu thì lấy phụ đề gốc của video, cùng số với video. Video tải H.264 + AAC để Premiere mở được. File AV1 đã tải thì bấm Tải lại, app tải lại hoặc chuyển sang H.264.
 - Tải video theo view: danh sách thả xuống (chất lượng, số video, ngôn ngữ phụ đề) nền tối, chữ trắng.

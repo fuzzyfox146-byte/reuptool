@@ -85,6 +85,8 @@ public sealed partial class MainForm : Form
     Button btnScanAll = null!;
     Button btnClearQueue = null!;
     Button btnUpload = null!;
+    Button btnUploadAll = null!;
+    Button btnDeleteUploaded = null!;
     Button btnStop = null!;
     Button btnRetryThumbs = null!;
     Label lblSummary = null!;
@@ -182,6 +184,7 @@ public sealed partial class MainForm : Form
         Controls.Add(root);
         DarkTheme.Apply(this);
         DarkTheme.StyleAccent(btnUpload);
+        DarkTheme.StyleAccent(btnUploadAll);
 
         Shown += (_, _) =>
         {
@@ -281,7 +284,7 @@ public sealed partial class MainForm : Form
     {
         var page = new TabPage("Hàng đợi") { Padding = new Padding(8) };
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3 };
-        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 96));
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 132));
         layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
 
@@ -290,15 +293,20 @@ public sealed partial class MainForm : Form
         btnScanAll = MakeButton("Quét tất cả kênh bật", () => Scan(SelectedChannelsOnly: false));
         btnUpload = MakeButton("Đăng video đã chọn", () => _ = UploadAsync());
         btnUpload.Tag = "accent";
+        btnUploadAll = MakeButton("Đăng hết ngày mai", () => _ = UploadTomorrowAllAsync());
+        btnUploadAll.Tag = "accent";
+        btnDeleteUploaded = MakeButton("Xóa video đã đăng mọi kênh", DeleteAllUploadedFiles);
         btnStop = MakeButton("Dừng", StopAuto);
         btnStop.Enabled = false;
         btnRetryThumbs = MakeButton("Gắn lại thumbnail", () => _ = RetryThumbnailsAsync());
         tools.Controls.Add(btnScanOne);
         tools.Controls.Add(btnScanAll);
         tools.Controls.Add(btnUpload);
+        tools.Controls.Add(btnUploadAll);
         tools.Controls.Add(btnStop);
         tools.Controls.Add(btnRetryThumbs);
         tools.Controls.Add(MakeButton("Xóa video và thumb đã đăng", DeleteUploadedFiles));
+        tools.Controls.Add(btnDeleteUploaded);
         btnClearQueue = MakeButton("Xóa hàng đợi", ClearChannelQueue);
         tools.Controls.Add(btnClearQueue);
         tools.Controls.Add(MakeButton("Chọn video chờ", () => SetChecks(item => string.IsNullOrEmpty(item.YoutubeVideoId))));
@@ -776,6 +784,10 @@ public sealed partial class MainForm : Form
         {
             if (btnUpload != null)
                 btnUpload.Enabled = true;
+            if (btnUploadAll != null)
+                btnUploadAll.Enabled = true;
+            if (btnDeleteUploaded != null)
+                btnDeleteUploaded.Enabled = true;
             if (btnScanAll != null)
                 btnScanAll.Enabled = true;
             if (btnRetryThumbs != null)
