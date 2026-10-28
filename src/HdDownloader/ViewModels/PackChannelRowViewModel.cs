@@ -11,6 +11,8 @@ public partial class PackChannelRowViewModel : ObservableObject
     private int _thumbCount;
     private string _root = "";
     private bool _downloadSubtitles;
+    private bool _downloadThumbs = true;
+    private string _mediaMode = "video";
 
     [ObservableProperty]
     private string _folderName = "HD036";
@@ -22,7 +24,7 @@ public partial class PackChannelRowViewModel : ObservableObject
     private int _playlistStart = 1;
 
     [ObservableProperty]
-    private int _playlistEnd = 10;
+    private int? _playlistEnd = null;
 
     [ObservableProperty]
     private int _nameStart = 1;
@@ -54,8 +56,27 @@ public partial class PackChannelRowViewModel : ObservableObject
             }
 
             var folder = Path.Combine(_root.Trim(), FolderName.Trim());
-            var sub = _downloadSubtitles ? @"    ·    " + folder + @"\sub" : "";
-            return folder + @"\video    ·    " + folder + @"\thumb" + sub;
+            var parts = new List<string>();
+            if (_mediaMode == "video")
+            {
+                parts.Add(folder + @"\video");
+            }
+            else if (_mediaMode == "audio")
+            {
+                parts.Add(folder + @"\audio");
+            }
+
+            if (_downloadThumbs)
+            {
+                parts.Add(folder + @"\thumb");
+            }
+
+            if (_downloadSubtitles)
+            {
+                parts.Add(folder + @"\sub");
+            }
+
+            return string.Join(@"    ·    ", parts);
         }
     }
 
@@ -65,9 +86,11 @@ public partial class PackChannelRowViewModel : ObservableObject
         OnPropertyChanged(nameof(LayoutText));
     }
 
-    public void SetDownloadSubtitles(bool enabled)
+    public void SetLayout(string mediaMode, bool downloadSubtitles, bool downloadThumbs)
     {
-        _downloadSubtitles = enabled;
+        _mediaMode = mediaMode;
+        _downloadSubtitles = downloadSubtitles;
+        _downloadThumbs = downloadThumbs;
         OnPropertyChanged(nameof(LayoutText));
     }
 
@@ -83,7 +106,8 @@ public partial class PackChannelRowViewModel : ObservableObject
 
     public void NoteDownload(string kind, string number)
     {
-        var total = PlaylistEnd >= PlaylistStart ? PlaylistEnd - PlaylistStart + 1 : 0;
+        var end = PlaylistEnd ?? 0;
+        var total = end >= PlaylistStart ? end - PlaylistStart + 1 : 0;
         if (string.Equals(kind, "Thumb", StringComparison.Ordinal))
         {
             if (_thumbSeen.Add(number))

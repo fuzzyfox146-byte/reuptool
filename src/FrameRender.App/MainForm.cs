@@ -20,6 +20,12 @@ public sealed class MainForm : Form
     private readonly ComboBox _quality = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 88 };
     private readonly CheckBox _gpu = new() { Text = "GPU (NVENC)", AutoSize = true, Checked = true };
     private readonly CheckBox _random = new() { Text = "Chọn ngẫu nhiên", AutoSize = true };
+    private readonly CheckBox _useTemplate = new() { Text = "Dùng Mẫu Template đa layer", AutoSize = true, Checked = true };
+    private readonly ComboBox _presetSelector = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 210 };
+    private readonly TabControl _tabs = new() { Dock = DockStyle.Fill };
+    private readonly TemplateEditorPanel _templateEditor = new();
+    private readonly LayerSourcesPanel _sources = new();
+    private bool _syncingPresets;
     private readonly DataGridView _main = new();
     private readonly DataGridView _waiting = new();
     private readonly Label _encoder = new() { AutoSize = true, ForeColor = Color.White, Dock = DockStyle.Right, TextAlign = ContentAlignment.MiddleRight };
@@ -38,23 +44,12 @@ public sealed class MainForm : Form
         _ffmpeg = ffmpeg;
         Text = FrameEdition.Title;
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(1000, 740);
-        Size = new Size(1180, 780);
+        MinimumSize = new Size(1080, 760);
+        Size = new Size(1280, 820);
         BackColor = Color.FromArgb(30, 30, 30);
         ForeColor = Color.White;
         Font = new Font("Segoe UI", 10f);
         KeyPreview = true;
-        KeyDown += (_, e) =>
-        {
-            if (!e.Control || e.KeyCode != Keys.S)
-            {
-                return;
-            }
-
-            SaveConfig();
-            e.SuppressKeyPress = true;
-            e.Handled = true;
-        };
         Build();
         Load += (_, _) => Bind();
         FormClosing += (_, _) =>
@@ -64,6 +59,41 @@ public sealed class MainForm : Form
             _queue?.StopForClose();
             Save();
         };
+    }
+
+    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+    {
+        if (keyData == (Keys.Control | Keys.S))
+        {
+            SaveConfig();
+            return true;
+        }
+
+        if (keyData == (Keys.Control | Keys.Shift | Keys.Z) || keyData == (Keys.Control | Keys.Y))
+        {
+            if (_templateEditor.Redo())
+            {
+                Save();
+                _status.Text = $"↷ Đã làm lại (Ctrl+Shift+Z) — Mẫu: {_templateEditor.CurrentPreset.Name}";
+                _log.Items.Insert(0, $"[{DateTime.Now:HH:mm:ss}] ↷ Làm lại thay đổi trên mẫu '{_templateEditor.CurrentPreset.Name}'.");
+            }
+
+            return true;
+        }
+
+        if (keyData == (Keys.Control | Keys.Z))
+        {
+            if (_templateEditor.Undo())
+            {
+                Save();
+                _status.Text = $"↶ Đã hoàn tác (Ctrl+Z) — Mẫu: {_templateEditor.CurrentPreset.Name}";
+                _log.Items.Insert(0, $"[{DateTime.Now:HH:mm:ss}] ↶ Hoàn tác thay đổi trên mẫu '{_templateEditor.CurrentPreset.Name}'.");
+            }
+
+            return true;
+        }
+
+        return base.ProcessCmdKey(ref msg, keyData);
     }
 
     private void Bind()
@@ -133,8 +163,63 @@ public sealed class MainForm : Form
         _clock.Tick += (_, _) => RefreshBars();
         _clock.Start();
         _log.Items.Insert(0, "FFmpeg: " + _ffmpeg);
+        _templateEditor.LoadPresets(
+            saved?.Presets,
+            saved?.SelectedPresetName,
+            _frames.Text,
+            _backgrounds.Text,
+            double.TryParse(_scale.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var sc) ? sc : FrameDesign.VideoScale,
+            double.TryParse(_opacity.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var op) ? op : FrameDesign.VideoOpacity,
+            _random.Checked);
+        SyncPresetSelectorFromEditor();
+        _sources.Changed += () =>
+        {
+            if (_allowPersist)
+            {
+                Save();
+            }
+        };
+        _templateEditor.PresetsChanged += () =>
+        {
+            SyncPresetSelectorFromEditor();
+            if (_allowPersist)
+            {
+                Save();
+            }
+        };
         ApplyAutoOutput();
         RefreshBars();
+    }
+
+    private void SyncPresetSelectorFromEditor()
+    {
+        if (_syncingPresets)
+        {
+            return;
+        }
+
+        _syncingPresets = true;
+        try
+        {
+            _presetSelector.Items.Clear();
+            foreach (var preset in _templateEditor.Presets)
+            {
+                _presetSelector.Items.Add(preset.Name);
+            }
+
+            var current = _templateEditor.CurrentPreset.Name;
+            var idx = _templateEditor.Presets.ToList().FindIndex(p => string.Equals(p.Name, current, StringComparison.OrdinalIgnoreCase));
+            if (idx >= 0 && idx < _presetSelector.Items.Count)
+            {
+                _presetSelector.SelectedIndex = idx;
+            }
+        }
+        finally
+        {
+            _syncingPresets = false;
+        }
+
+        _sources.Bind(_templateEditor.CurrentPreset);
     }
 
     private void Build()
@@ -143,11 +228,12 @@ public sealed class MainForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 6,
+            RowCount = 7,
             Padding = new Padding(12),
             BackColor = Color.FromArgb(30, 30, 30)
         };
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 150));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 118));
@@ -178,8 +264,29 @@ public sealed class MainForm : Form
         options.Controls.Add(_quality);
         StyleCheck(_gpu);
         StyleCheck(_random);
+        StyleCheck(_useTemplate);
         options.Controls.Add(_gpu);
         options.Controls.Add(_random);
+        options.Controls.Add(_useTemplate);
+        options.Controls.Add(new Label { Text = "Mẫu:", AutoSize = true, ForeColor = Color.White, Padding = new Padding(8, 6, 4, 0) });
+        _presetSelector.BackColor = Color.FromArgb(45, 45, 48);
+        _presetSelector.ForeColor = Color.White;
+        _presetSelector.FlatStyle = FlatStyle.Flat;
+        _presetSelector.SelectedIndexChanged += (_, _) =>
+        {
+            if (_syncingPresets || _presetSelector.SelectedItem is not string presetName)
+            {
+                return;
+            }
+
+            _templateEditor.SelectPresetByName(presetName);
+            if (_allowPersist)
+            {
+                Save();
+            }
+        };
+        options.Controls.Add(_presetSelector);
+        options.Controls.Add(Button("Thiết kế Mẫu / Effect...", (_, _) => _tabs.SelectedIndex = 1, Color.FromArgb(0, 120, 215)));
 
         var buttons = Row();
         buttons.Controls.Add(Button("Thêm vào hàng đợi", (_, _) => AddToQueue()));
@@ -259,12 +366,30 @@ public sealed class MainForm : Form
         statusPanel.SetColumnSpan(_folders, 2);
 
         root.Controls.Add(folders, 0, 0);
-        root.Controls.Add(options, 0, 1);
-        root.Controls.Add(buttons, 0, 2);
-        root.Controls.Add(statusPanel, 0, 3);
-        root.Controls.Add(queues, 0, 4);
-        root.Controls.Add(bottom, 0, 5);
-        Controls.Add(root);
+        root.Controls.Add(Wrap("Nguồn cho từng layer của mẫu", _sources), 0, 1);
+        root.Controls.Add(options, 0, 2);
+        root.Controls.Add(buttons, 0, 3);
+        root.Controls.Add(statusPanel, 0, 4);
+        root.Controls.Add(queues, 0, 5);
+        root.Controls.Add(bottom, 0, 6);
+
+        var tabQueue = new TabPage("Hàng đợi & Chạy Batch")
+        {
+            BackColor = Color.FromArgb(30, 30, 30),
+            ForeColor = Color.White
+        };
+        tabQueue.Controls.Add(root);
+
+        var tabDesign = new TabPage("Thiết kế Template & Effect Controls (Premiere)")
+        {
+            BackColor = Color.FromArgb(30, 30, 30),
+            ForeColor = Color.White
+        };
+        tabDesign.Controls.Add(_templateEditor);
+
+        _tabs.TabPages.Add(tabQueue);
+        _tabs.TabPages.Add(tabDesign);
+        Controls.Add(_tabs);
     }
 
     private bool AddToQueue()
@@ -277,12 +402,10 @@ public sealed class MainForm : Form
         try
         {
             ApplyAutoOutput();
-            var videos = FramePlan.ListMedia(_videos.Text, FrameDesign.VideoExtensions);
-            var frames = FramePlan.ListMedia(_frames.Text, FrameDesign.FrameExtensions);
-            var backgrounds = FramePlan.ListMedia(_backgrounds.Text, FrameDesign.VideoExtensions);
-            if (videos.Count == 0 || frames.Count == 0 || backgrounds.Count == 0)
+            var videos = ResolveDrivers(out var sourceFolder);
+            if (videos.Count == 0)
             {
-                MessageBox.Show("Cần ít nhất 1 video, 1 PNG khung và 1 video nền.");
+                MessageBox.Show("Không tìm thấy video nguồn. Chọn folder/file ở ô Video chính, hoặc chọn folder chung để tự dò.");
                 return false;
             }
 
@@ -298,7 +421,24 @@ public sealed class MainForm : Form
                 return false;
             }
 
-            _queue.Enqueue(videos, frames, backgrounds, _output.Text, _random.Checked, batch, _videos.Text);
+            if (_useTemplate.Checked)
+            {
+                var preset = PrepareEffectivePreset();
+                _queue.EnqueueTemplate(videos, preset, _output.Text, batch, sourceFolder);
+                _batch.Text = _queue.BatchSize.ToString(CultureInfo.InvariantCulture);
+                Save();
+                return true;
+            }
+
+            var frames = FramePlan.ListMedia(_frames.Text, FrameDesign.FrameExtensions);
+            var backgrounds = FramePlan.ListMedia(_backgrounds.Text, FrameDesign.VideoExtensions);
+            if (frames.Count == 0 || backgrounds.Count == 0)
+            {
+                MessageBox.Show("Cần ít nhất 1 video, 1 PNG khung và 1 video nền.");
+                return false;
+            }
+
+            _queue.Enqueue(videos, frames, backgrounds, _output.Text, _random.Checked, batch, sourceFolder);
             _batch.Text = _queue.BatchSize.ToString(CultureInfo.InvariantCulture);
             Save();
             return true;
@@ -334,8 +474,12 @@ public sealed class MainForm : Form
 
         try
         {
-            var frames = FramePlan.ListMedia(_frames.Text, FrameDesign.FrameExtensions);
-            var backgrounds = FramePlan.ListMedia(_backgrounds.Text, FrameDesign.VideoExtensions);
+            var frames = Directory.Exists(_frames.Text)
+                ? FramePlan.ListMedia(_frames.Text, FrameDesign.FrameExtensions)
+                : [];
+            var backgrounds = Directory.Exists(_backgrounds.Text)
+                ? FramePlan.ListMedia(_backgrounds.Text, FrameDesign.VideoExtensions)
+                : [];
             _queue.Start(settings, frames, backgrounds, _output.Text);
             Save();
         }
@@ -571,10 +715,13 @@ public sealed class MainForm : Form
 
     private void SaveConfig()
     {
+        var presetName = _templateEditor.CommitAndSaveCurrentPreset();
+        SyncPresetSelectorFromEditor();
         ApplyWorkers();
         Save();
         var limit = _queue?.WorkerLimit.ToString(CultureInfo.InvariantCulture) ?? _workers.Text.Trim();
-        _log.Items.Insert(0, $"Đã lưu cấu hình. Số video cùng lúc: {limit}.");
+        _status.Text = $"✓ Đã lưu mẫu '{presetName}' & cấu hình ({DateTime.Now:HH:mm:ss})";
+        _log.Items.Insert(0, $"[{DateTime.Now:HH:mm:ss}] Đã lưu mẫu '{presetName}' và cấu hình (Ctrl+S). Số video cùng lúc: {limit}.");
     }
 
     private void ApplyWorkers()
@@ -631,6 +778,86 @@ public sealed class MainForm : Form
         }
     }
 
+    /// <summary>
+    /// Main videos come from the "Video chính" box (a folder or a single file); when it is empty
+    /// and a layer uses auto-detect, they are found in the shared folder.
+    /// </summary>
+    private IReadOnlyList<string> ResolveDrivers(out string sourceFolder)
+    {
+        var text = _videos.Text.Trim().Trim('"');
+        if (File.Exists(text))
+        {
+            sourceFolder = Path.GetDirectoryName(Path.GetFullPath(text)) ?? text;
+            return [Path.GetFullPath(text)];
+        }
+
+        if (text.Length > 0)
+        {
+            sourceFolder = text;
+            var exts = _useTemplate.Checked && _templateEditor.CurrentPreset.AudioOnlyDriver ? FrameDesign.DriverExtensions : FrameDesign.VideoExtensions;
+            return FramePlan.ListMedia(text, exts);
+        }
+
+        sourceFolder = _sources.AutoFolder;
+        var preset = _templateEditor.CurrentPreset;
+        return _useTemplate.Checked && FrameSourceResolver.UsesAutoFolder(preset) && Directory.Exists(sourceFolder)
+            ? FrameSourceResolver.FindDrivers(preset, sourceFolder)
+            : [];
+    }
+
+    private FrameTemplatePreset PrepareEffectivePreset()
+    {
+        var preset = _templateEditor.CurrentPreset.Clone();
+        foreach (var warning in FrameSourceResolver.Apply(preset))
+        {
+            _log.Items.Insert(0, "⚠ " + warning);
+        }
+
+        var siblingSub = SiblingSubFolder(_videos.Text);
+        foreach (var layer in preset.Layers)
+        {
+            if (layer.Kind == FrameLayerKind.FrameOverlay && string.IsNullOrWhiteSpace(layer.Folder) && !string.IsNullOrWhiteSpace(_frames.Text))
+            {
+                layer.Folder = _frames.Text;
+            }
+            else if (layer.Kind == FrameLayerKind.BackgroundVideo && string.IsNullOrWhiteSpace(layer.Folder) && !string.IsNullOrWhiteSpace(_backgrounds.Text))
+            {
+                layer.Folder = _backgrounds.Text;
+            }
+            else if (layer.Kind == FrameLayerKind.Subtitle && string.IsNullOrWhiteSpace(layer.Folder) && siblingSub is not null)
+            {
+                layer.Folder = siblingSub;
+            }
+        }
+
+        return preset;
+    }
+
+    private static string? SiblingSubFolder(string sourceFolder)
+    {
+        if (string.IsNullOrWhiteSpace(sourceFolder))
+        {
+            return null;
+        }
+
+        try
+        {
+            var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(sourceFolder));
+            var parent = Path.GetDirectoryName(full);
+            if (string.IsNullOrWhiteSpace(parent))
+            {
+                return null;
+            }
+
+            var sub = Path.Combine(parent, "sub");
+            return Directory.Exists(sub) ? sub : null;
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return null;
+        }
+    }
+
     private void Save()
     {
         if (_queue is null)
@@ -650,7 +877,9 @@ public sealed class MainForm : Form
             _workers.Text,
             _gpu.Checked,
             _random.Checked,
-            SelectedOutputHeight()));
+            SelectedOutputHeight(),
+            _templateEditor.Presets.Select(p => p.Clone()).ToList(),
+            _templateEditor.CurrentPreset.Name));
     }
 
     private void AddFolder(TableLayoutPanel panel, int row, string label, TextBox box)

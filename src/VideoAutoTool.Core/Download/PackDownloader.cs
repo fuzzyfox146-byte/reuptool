@@ -5,7 +5,8 @@ namespace VideoAutoTool.Core.Download;
 public sealed class PackDownloader
 {
     public const int MaxParallel = 4;
-    public const int MaxSpan = 300;
+    public const int MaxChannelParallel = 5;
+
 
     private readonly IYtDlpRunner _runner;
 
@@ -27,27 +28,50 @@ public sealed class PackDownloader
         IReadOnlyList<PackChannelRequest> channels,
         int parallel,
         IProgress<DownloadNotice>? log,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        int channelParallel = MaxChannelParallel)
     {
+        // parallel = items at once inside ONE channel; channelParallel = channels running at the same time.
+        // Each channel has its own item gate, so a big channel cannot starve the others.
         parallel = Math.Clamp(parallel, 1, MaxParallel);
+        channelParallel = Math.Clamp(channelParallel, 1, MaxChannelParallel);
         var results = new PackDownloadResult[channels.Count];
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var gate = new SemaphoreSlim(parallel);
+        using var channelGate = new SemaphoreSlim(channelParallel);
         var cookie = 0;
         var tasks = new Task[channels.Count];
         for (var i = 0; i < channels.Count; i++)
         {
             var index = i;
-            tasks[i] = RunChannelAsync(
-                tools,
-                channels[i],
-                gate,
-                log,
-                linked,
-                cancellationToken,
-                () => Interlocked.Exchange(ref cookie, 1),
-                () => Volatile.Read(ref cookie) == 1,
-                value => results[index] = value);
+            tasks[i] = Task.Run(async () =>
+            {
+                try
+                {
+                    await channelGate.WaitAsync(linked.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+
+                try
+                {
+                    await RunChannelAsync(
+                        tools,
+                        channels[index],
+                        new SemaphoreSlim(parallel),
+                        log,
+                        linked,
+                        cancellationToken,
+                        () => Interlocked.Exchange(ref cookie, 1),
+                        () => Volatile.Read(ref cookie) == 1,
+                        value => results[index] = value).ConfigureAwait(false);
+                }
+                finally
+                {
+                    channelGate.Release();
+                }
+            }, CancellationToken.None);
         }
 
         await Task.WhenAll(tasks).ConfigureAwait(false);
@@ -83,11 +107,19 @@ public sealed class PackDownloader
                 return;
             }
 
-            var videoDir = PackFolders.Video(folder);
+            var videoDir = PackFolders.Media(folder, request);
             var thumbDir = PackFolders.Thumb(folder);
             var subDir = PackFolders.Sub(folder);
-            Directory.CreateDirectory(videoDir);
-            Directory.CreateDirectory(thumbDir);
+            if (request.Media != PackMediaMode.None)
+            {
+                Directory.CreateDirectory(videoDir);
+            }
+
+            if (request.DownloadThumbs)
+            {
+                Directory.CreateDirectory(thumbDir);
+            }
+
             Directory.CreateDirectory(PackFolders.Temp(folder));
             if (request.DownloadSubtitles)
             {
@@ -96,9 +128,13 @@ public sealed class PackDownloader
 
             var label = request.FolderName.Trim();
             var firstNumber = request.NameStart;
-            var lastNumber = request.NameStart + (request.PlaylistEnd - request.PlaylistStart);
-            var parked = await ParkVideosPremiereCannotOpenAsync(
-                tools, videoDir, label, folder, firstNumber, lastNumber, log, linked.Token).ConfigureAwait(false);
+            var lastNumber = request.PlaylistEnd > 0
+                ? request.NameStart + (request.PlaylistEnd - request.PlaylistStart)
+                : int.MaxValue;
+            var parked = request.Media != PackMediaMode.Video
+                ? []
+                : await ParkVideosPremiereCannotOpenAsync(
+                    tools, videoDir, label, folder, firstNumber, lastNumber, log, linked.Token).ConfigureAwait(false);
             try
             {
             IReadOnlyList<PackItem> pending;
@@ -121,14 +157,35 @@ public sealed class PackDownloader
             }
             else
             {
-                pending = PackFolders.Pending(videoDir, thumbDir, request, subDir);
+                if (request.PlaylistEnd <= 0)
+                {
+                    var count = await QueryChannelCountAsync(tools, request, linked.Token).ConfigureAwait(false);
+                    if (count.CookieDead)
+                    {
+                        markCookie();
+                        linked.Cancel();
+                        set(Cookie(folder, count.CookieLine));
+                        return;
+                    }
+
+                    if (count.Count == 0)
+                    {
+                        set(new PackDownloadResult(folder, DownloadStop.Completed, $"{label}  kênh không có video nào."));
+                        return;
+                    }
+
+                    var effectiveRequest = request with { PlaylistEnd = count.Count };
+                    pending = PackFolders.Pending(videoDir, thumbDir, effectiveRequest, subDir);
+                }
+                else
+                {
+                    pending = PackFolders.Pending(videoDir, thumbDir, request, subDir);
+                }
             }
 
             if (pending.Count == 0)
             {
-                var done = request.DownloadSubtitles
-                    ? $"{label}  đã có đủ video, thumb và phụ đề, không tải lại."
-                    : $"{label}  đã có đủ video và thumb, không tải lại.";
+                var done = $"{label}  đã có đủ {Describe(request)}, không tải lại.";
                 log?.Report(new DownloadNotice(null, done, folder));
                 set(new PackDownloadResult(folder, DownloadStop.Completed, done));
                 return;
@@ -181,16 +238,20 @@ public sealed class PackDownloader
 
             if (itemResults.Any(item => item.ExitCode != 0))
             {
-                set(new PackDownloadResult(folder, DownloadStop.Failed, "Video hoặc thumb lỗi. Các số khác vẫn được tải."));
+                var failed = pending
+                    .Where((_, i) => itemResults[i].ExitCode != 0)
+                    .Select(item => item.Number.ToString("000"))
+                    .ToList();
+                var detail = $"Lỗi số {string.Join(", ", failed)}. Các số khác đã tải xong. Bấm Bắt đầu lần nữa để tải lại số lỗi.";
+                log?.Report(new DownloadNotice(null, $"{label}  {detail}", folder));
+                set(new PackDownloadResult(folder, DownloadStop.Failed, detail));
                 return;
             }
 
             set(new PackDownloadResult(
                 folder,
                 DownloadStop.Completed,
-                request.DownloadSubtitles
-                    ? $"Xong {label}. Video, thumb và phụ đề đánh số từ {request.NameStart:000}."
-                    : $"Xong {label}. Video và thumb đánh số từ {request.NameStart:000}. Không tải phụ đề."));
+                $"Xong {label}. {Describe(request)} đánh số từ {request.NameStart:000}."));
             }
             finally
             {
@@ -240,12 +301,16 @@ public sealed class PackDownloader
             var exit = 0;
             if (item.NeedVideo)
             {
-                var video = await RunLoggedAsync(
+                var video = await RunWithRetryAsync(
                     tools,
                     item.VideoId is { Length: > 0 } videoId
                         ? PackPlan.VideoById(tools, request, videoId, item.Number)
                         : PackPlan.Video(tools, request, item.PlaylistIndex, item.Number),
-                    new DownloadActivityLog(log, "Video", folder),
+                    "Video",
+                    request,
+                    folder,
+                    item,
+                    log,
                     linked.Token).ConfigureAwait(false);
                 if (video.CookieDead)
                 {
@@ -262,12 +327,16 @@ public sealed class PackDownloader
 
             if (item.NeedThumb && !linked.IsCancellationRequested)
             {
-                var thumb = await RunLoggedAsync(
+                var thumb = await RunWithRetryAsync(
                     tools,
                     item.VideoId is { Length: > 0 } videoId
                         ? PackPlan.ThumbById(tools, request, videoId, item.Number)
                         : PackPlan.Thumb(tools, request, item.PlaylistIndex, item.Number),
-                    new DownloadActivityLog(log, "Thumb", folder),
+                    "Thumb",
+                    request,
+                    folder,
+                    item,
+                    log,
                     linked.Token).ConfigureAwait(false);
                 if (thumb.CookieDead)
                 {
@@ -337,10 +406,134 @@ public sealed class PackDownloader
         {
             return new YtDlpRunResult(-1, cookieSeen(), null);
         }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            // One broken item (disk full, yt-dlp cannot start, file locked) must not stop the other numbers.
+            log?.Report(new DownloadNotice(null, $"{request.FolderName.Trim()}  {item.Number:000} lỗi: {ex.Message}", folder));
+            return new YtDlpRunResult(-2, false, null);
+        }
         finally
         {
             gate.Release();
         }
+    }
+
+    private const int MaxAttempts = 3;
+
+    /// <summary>
+    /// Runs one yt-dlp call and retries transient failures (network, 429, fragment errors).
+    /// Permanent ones (private, removed, members-only, age gate) are skipped at once.
+    /// </summary>
+    private async Task<YtDlpRunResult> RunWithRetryAsync(
+        DownloadTools tools,
+        IReadOnlyList<string> arguments,
+        string kind,
+        PackChannelRequest request,
+        string folder,
+        PackItem item,
+        IProgress<DownloadNotice>? log,
+        CancellationToken cancellationToken)
+    {
+        var label = $"{request.FolderName.Trim()}  {item.Number:000}";
+        var result = new YtDlpRunResult(-1, false, null);
+        for (var attempt = 1; attempt <= MaxAttempts; attempt++)
+        {
+            var tap = new ErrorTap(new DownloadActivityLog(log, kind, folder));
+            result = await _runner.RunAsync(tools.YtDlpPath, arguments, tap, cancellationToken).ConfigureAwait(false);
+            if (result.ExitCode == 0 || result.CookieDead)
+            {
+                return result;
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            var reason = tap.LastError ?? $"yt-dlp thoát với mã {result.ExitCode}";
+            if (IsPermanentError(reason))
+            {
+                log?.Report(new DownloadNotice(null, $"{label}  {kind} bỏ qua (không tải được): {reason}", folder));
+                return result;
+            }
+
+            if (attempt == MaxAttempts)
+            {
+                log?.Report(new DownloadNotice(null, $"{label}  {kind} lỗi sau {MaxAttempts} lần: {reason}", folder));
+                return result;
+            }
+
+            log?.Report(new DownloadNotice(null, $"{label}  {kind} lỗi, thử lại {attempt + 1}/{MaxAttempts}: {reason}", folder));
+            await Task.Delay(TimeSpan.FromSeconds(3 * attempt), cancellationToken).ConfigureAwait(false);
+        }
+
+        return result;
+    }
+
+    private static bool IsPermanentError(string reason) =>
+        PermanentMarkers.Any(marker => reason.Contains(marker, StringComparison.OrdinalIgnoreCase));
+
+    private static readonly string[] PermanentMarkers =
+    [
+        "Private video",
+        "Video unavailable",
+        "not available",
+        "members-only",
+        "Join this channel",
+        "has been removed",
+        "copyright",
+        "confirm your age",
+        "age-restricted",
+        "This live event",
+        "Premieres in",
+        "account associated with this video has been terminated"
+    ];
+
+    /// <summary>Remembers the last "ERROR:" line of a yt-dlp run while still feeding the activity log.</summary>
+    private sealed class ErrorTap : IProgress<string>
+    {
+        private readonly DownloadActivityLog _activity;
+
+        public ErrorTap(DownloadActivityLog activity) => _activity = activity;
+
+        public string? LastError { get; private set; }
+
+        public void Report(string value)
+        {
+            var index = value.IndexOf("ERROR:", StringComparison.Ordinal);
+            if (index >= 0)
+            {
+                LastError = value[(index + "ERROR:".Length)..].Trim();
+            }
+
+            _activity.OnLine(value);
+        }
+    }
+
+    private static string Describe(PackChannelRequest request)
+    {
+        var parts = new List<string>();
+        if (request.Media == PackMediaMode.Video)
+        {
+            parts.Add("video");
+        }
+        else if (request.Media == PackMediaMode.Audio)
+        {
+            parts.Add("sound");
+        }
+
+        if (request.DownloadThumbs)
+        {
+            parts.Add("thumb");
+        }
+
+        if (request.DownloadSubtitles)
+        {
+            parts.Add("phụ đề");
+        }
+
+        return parts.Count switch
+        {
+            0 => "mục đã chọn",
+            1 => parts[0],
+            _ => string.Join(", ", parts[..^1]) + " và " + parts[^1]
+        };
     }
 
     private Task<YtDlpRunResult> RunLoggedAsync(
@@ -349,6 +542,25 @@ public sealed class PackDownloader
         DownloadActivityLog activity,
         CancellationToken cancellationToken) =>
         _runner.RunAsync(tools.YtDlpPath, arguments, new Progress<string>(activity.OnLine), cancellationToken);
+
+    private async Task<(int Count, bool CookieDead, string? CookieLine)> QueryChannelCountAsync(
+        DownloadTools tools,
+        PackChannelRequest request,
+        CancellationToken cancellationToken)
+    {
+        var lines = new LineCollector();
+        var catalog = await _runner.RunAsync(
+            tools.YtDlpPath,
+            PackPlan.ChannelCatalog(tools, request),
+            lines,
+            cancellationToken).ConfigureAwait(false);
+        if (catalog.CookieDead)
+        {
+            return (0, true, catalog.CookieLine);
+        }
+
+        return (lines.Lines.Count, false, null);
+    }
 
     private async Task<(IReadOnlyList<PackViewEntry> Entries, PackDownloadResult? Result)> RankByViewsAsync(
         DownloadTools tools,
@@ -374,15 +586,16 @@ public sealed class PackDownloader
         }
 
         var ranked = PackViewRank.Order(PackViewRank.Parse(lines.Lines));
-        if (ranked.Count < request.PlaylistEnd)
+        if (ranked.Count < request.PlaylistStart)
         {
             return ([], new PackDownloadResult(
                 PackFolders.Channel(request),
-                DownloadStop.Failed,
-                $"Kênh có {ranked.Count} video, không đủ đến hạng {request.PlaylistEnd} theo view."));
+                DownloadStop.Completed,
+                $"Kênh có {ranked.Count} video, không có video nào từ vị trí {request.PlaylistStart}."));
         }
 
-        var window = ranked.Skip(request.PlaylistStart - 1).Take(request.PlaylistEnd - request.PlaylistStart + 1).ToList();
+        var effectiveEnd = request.PlaylistEnd <= 0 ? ranked.Count : Math.Min(request.PlaylistEnd, ranked.Count);
+        var window = ranked.Skip(request.PlaylistStart - 1).Take(effectiveEnd - request.PlaylistStart + 1).ToList();
         var top = window[0];
         var number = request.NameStart;
         if (window.All(entry => entry.Views == 0))
@@ -635,10 +848,7 @@ public sealed class PackDownloader
             return "Không thấy yt-dlp. Hãy chọn file yt-dlp.exe.";
         }
 
-        if (string.IsNullOrWhiteSpace(tools.CookiesPath) || !File.Exists(tools.CookiesPath))
-        {
-            return "Không thấy file cookie. Hãy chọn cookies.txt dùng chung.";
-        }
+        // Cookie is optional: if omitted, yt-dlp runs anonymously (works fine for public videos)
 
         var ffmpeg = Path.Combine(tools.FfmpegLocation ?? "", "ffmpeg.exe");
         if (string.IsNullOrWhiteSpace(tools.FfmpegLocation) || !File.Exists(ffmpeg))
@@ -662,14 +872,19 @@ public sealed class PackDownloader
             return "Chưa nhập link kênh.";
         }
 
-        if (request.PlaylistStart < 1 || request.PlaylistEnd < request.PlaylistStart)
+        if (request.Media == PackMediaMode.None && !request.DownloadThumbs && !request.DownloadSubtitles)
         {
-            return "Vị trí từ–đến không hợp lệ.";
+            return "Chưa chọn gì để tải: bật video/sound, thumb hoặc phụ đề.";
         }
 
-        if (request.PlaylistEnd - request.PlaylistStart + 1 > MaxSpan)
+        if (request.PlaylistStart < 1)
         {
-            return "Một lượt tối đa 300 video.";
+            return "Vị trí bắt đầu phải >= 1.";
+        }
+
+        if (request.PlaylistEnd > 0 && request.PlaylistEnd < request.PlaylistStart)
+        {
+            return "Vị trí đến phải lớn hơn hoặc bằng vị trí từ (hoặc để trống/0 để tải hết kênh).";
         }
 
         if (request.NameStart < 1)

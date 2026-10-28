@@ -46,39 +46,54 @@
                             Command="{Binding BrowseRootCommand}"/>
                     <TextBox Text="{Binding RootFolder, UpdateSourceTrigger=PropertyChanged}"/>
                 </DockPanel>
-                <DockPanel LastChildFill="False">
-                    <StackPanel>
+                <WrapPanel Margin="0,4,0,0">
+                    <StackPanel Margin="0,0,14,0">
+                        <Label Content="{x:Static t:UiText.MediaLabel}"/>
+                        <ComboBox Width="140" HorizontalAlignment="Left"
+                                  ItemsSource="{Binding MediaModeOptions}"
+                                  DisplayMemberPath="Label"
+                                  SelectedValuePath="Id"
+                                  SelectedValue="{Binding MediaMode}"/>
+                    </StackPanel>
+                    <StackPanel Margin="0,0,14,0" IsEnabled="{Binding IsVideoMode}">
                         <Label Content="{x:Static t:UiText.Quality}"/>
-                        <ComboBox Width="110" HorizontalAlignment="Left"
+                        <ComboBox Width="90" HorizontalAlignment="Left"
                                   ItemsSource="{Binding QualityOptions}"
                                   DisplayMemberPath="Label"
                                   SelectedValuePath="Id"
                                   SelectedValue="{Binding Quality}"/>
                     </StackPanel>
-                    <StackPanel Margin="16,0,0,0">
-                        <Label Content="{x:Static t:UiText.Parallel}"/>
-                        <ComboBox Width="80" HorizontalAlignment="Left"
+                    <StackPanel Margin="0,0,14,0">
+                        <Label Content="{x:Static t:UiText.ParallelPerChannel}"/>
+                        <ComboBox Width="70" HorizontalAlignment="Left"
                                   ItemsSource="{Binding ParallelOptions}"
                                   SelectedItem="{Binding Parallel}"/>
                     </StackPanel>
-                    <CheckBox Margin="16,22,0,0" VerticalAlignment="Bottom"
-                              Content="{x:Static t:UiText.ByViews}"
-                              IsChecked="{Binding OrderByViews}"
-                              Visibility="{Binding ViewOrderVisibility}"/>
-                    <CheckBox Margin="16,22,0,0" VerticalAlignment="Bottom"
+                    <StackPanel Margin="0,0,14,0">
+                        <Label Content="{x:Static t:UiText.ChannelParallel}"/>
+                        <ComboBox Width="70" HorizontalAlignment="Left"
+                                  ItemsSource="{Binding ChannelParallelOptions}"
+                                  SelectedItem="{Binding ChannelParallel}"/>
+                    </StackPanel>
+                    <CheckBox Margin="0,22,14,0" VerticalAlignment="Bottom"
+                              Content="{x:Static t:UiText.DownloadThumbs}"
+                              IsChecked="{Binding DownloadThumbs}"/>
+                    <CheckBox Margin="0,22,14,0" VerticalAlignment="Bottom"
                               Content="{x:Static t:UiText.DownloadSubtitles}"
-                              IsChecked="{Binding DownloadSubtitles}"
-                              Visibility="{Binding ViewOrderVisibility}"/>
-                    <StackPanel Margin="16,0,0,0" VerticalAlignment="Bottom"
-                                Visibility="{Binding ViewOrderVisibility}">
+                              IsChecked="{Binding DownloadSubtitles}"/>
+                    <CheckBox Margin="0,22,14,0" VerticalAlignment="Bottom"
+                              Content="{x:Static t:UiText.ByViews}"
+                              IsChecked="{Binding OrderByViews}"/>
+                    <StackPanel Margin="0,0,0,0" VerticalAlignment="Bottom"
+                                IsEnabled="{Binding DownloadSubtitles}">
                         <Label Content="{x:Static t:UiText.SubtitleLanguages}"/>
-                        <ComboBox Width="150" HorizontalAlignment="Left"
+                        <ComboBox Width="140" HorizontalAlignment="Left"
                                   ItemsSource="{Binding SubtitleLanguageOptions}"
                                   DisplayMemberPath="Label"
                                   SelectedValuePath="Id"
                                   SelectedValue="{Binding SubtitleLanguages}"/>
                     </StackPanel>
-                </DockPanel>
+                </WrapPanel>
             </StackPanel>
             <StackPanel Grid.Column="1">
                 <Button Content="{x:Static t:UiText.AddChannel}" Margin="0,0,0,8" Padding="8,8"
@@ -139,7 +154,7 @@
                                     <TextBox Grid.Column="3" Margin="0,0,4,0" IsEnabled="{Binding CanEdit}"
                                              Text="{Binding PlaylistStart, UpdateSourceTrigger=PropertyChanged}"/>
                                     <TextBox Grid.Column="4" Margin="0,0,4,0" IsEnabled="{Binding CanEdit}"
-                                             Text="{Binding PlaylistEnd, UpdateSourceTrigger=PropertyChanged}"/>
+                                             Text="{Binding PlaylistEnd, UpdateSourceTrigger=PropertyChanged, TargetNullValue=''}"/>
                                     <TextBox Grid.Column="5" Margin="0,0,4,0" IsEnabled="{Binding CanEdit}"
                                              Text="{Binding NameStart, UpdateSourceTrigger=PropertyChanged}"/>
                                     <StackPanel Grid.Column="6" VerticalAlignment="Center">

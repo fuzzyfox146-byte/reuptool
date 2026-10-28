@@ -18,7 +18,14 @@ public sealed class PackSettings
 
     public bool DownloadSubtitles { get; set; } = PackSettingsStore.DefaultDownloadSubtitles;
 
-    public string SubtitleLanguages { get; set; } = "en,ja,pt";
+    public string SubtitleLanguages { get; set; } = "ja";
+
+    /// <summary>"video", "audio" or "none".</summary>
+    public string MediaMode { get; set; } = "video";
+
+    public bool DownloadThumbs { get; set; } = true;
+
+    public int ChannelParallel { get; set; } = 2;
 
     public List<PackChannelSettings> Channels { get; set; } = [];
 }
@@ -69,7 +76,7 @@ public static class PackSettingsStore
 
             if (string.IsNullOrWhiteSpace(settings.SubtitleLanguages))
             {
-                settings.SubtitleLanguages = "en,ja,pt";
+                settings.SubtitleLanguages = "ja";
             }
 
             return settings;

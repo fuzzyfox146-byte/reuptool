@@ -10,9 +10,16 @@ public static class UiText
     public static string Title => "Tải video theo view";
     public static string Blurb => "Giống bản tải hiện tại. Bật Theo view: trong khoảng Từ–Đến, video nhiều view nhất ghi số ở ô Số (1 ra 001), rồi giảm dần đến view thấp nhất. Tắt thì vẫn theo thứ tự trên kênh.";
 #else
-    public static string Title => S(nameof(Title));
-    public static string Blurb => S(nameof(Blurb));
+    public static string Title => "Tải video / sound + sub + thumb";
+    public static string Blurb => "Chọn tải video hoặc chỉ âm thanh (AAC .m4a, mở thẳng trong Premiere), có hoặc không phụ đề .srt và thumbnail .jpg. File cùng số thứ tự và cùng tên: video\\001 Tên.mp4 (hoặc audio\\001 Tên.m4a), sub\\001 Tên.srt, thumb\\001 Tên.jpg. Nhiều kênh chạy cùng lúc.";
 #endif
+    public static string MediaLabel => "Tải";
+    public static string MediaVideo => "Video";
+    public static string MediaAudio => "Chỉ sound (m4a)";
+    public static string MediaNone => "Không tải video/sound";
+    public static string DownloadThumbs => "Tải thumb";
+    public static string ParallelPerChannel => "Số video cùng lúc (mỗi kênh)";
+    public static string ChannelParallel => "Số kênh cùng lúc";
     public static string YtDlp => S(nameof(YtDlp));
     public static string Cookies => S(nameof(Cookies));
     public static string Root => S(nameof(Root));

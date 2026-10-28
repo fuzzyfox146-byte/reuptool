@@ -24,6 +24,14 @@ public sealed class JobRow : INotifyPropertyChanged, IFrameQueueSlot
 
     public string OutputPath { get; set; } = "";
 
+    public bool MirroredLeft { get; set; }
+
+    public Dictionary<string, string> LayerAssets { get; set; } = new(StringComparer.Ordinal);
+
+    public Dictionary<string, string> LayerColors { get; set; } = new(StringComparer.Ordinal);
+
+    public FrameTemplatePreset? TemplateSnapshot { get; set; }
+
     public string State { get; set; } = VideoAutoTool.Core.FrameBatch.FrameDesign.Wait;
 
     public string Detail { get; set; } = "";

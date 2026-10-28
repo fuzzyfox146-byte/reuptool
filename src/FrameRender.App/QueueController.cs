@@ -240,6 +240,148 @@ public sealed class QueueController
         RequestPersist();
     }
 
+    public void EnqueueTemplate(
+        IReadOnlyList<string> videos,
+        FrameTemplatePreset preset,
+        string outputDirectory,
+        int batchSize,
+        string sourceFolder)
+    {
+        var fullSource = Path.GetFullPath(sourceFolder);
+        var sameSource = _items.FirstOrDefault(row => string.Equals(row.SourceFolder, fullSource, StringComparison.OrdinalIgnoreCase));
+        var intakeName = sameSource?.IntakeName ?? UniqueName(FramePlan.SourceLabel(fullSource));
+        Directory.CreateDirectory(outputDirectory);
+        var keptSource = _kept.FirstOrDefault(clip => string.Equals(clip.SourceFolder, fullSource, StringComparison.OrdinalIgnoreCase));
+        if (sameSource is null && keptSource is not null)
+        {
+            intakeName = keptSource.IntakeName;
+        }
+
+        var seedRaw = string.Join('\n', videos.Select(Path.GetFullPath)) + "|" + preset.Name;
+        var seed = BitConverter.ToInt32(SHA256.HashData(Encoding.UTF8.GetBytes(seedRaw)), 0) & int.MaxValue;
+        var assigned = FrameTemplatePlanner.AssignJobs(videos, preset, seed);
+        var known = _items.Select(row => row.VideoPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var fresh = new List<JobRow>();
+        var added = new List<JobRow>();
+        var rememberedNow = 0;
+        var id = sameSource?.IntakeId ?? keptSource?.IntakeId ?? "";
+        lock (_gate)
+        {
+            if (_batchSize == 0)
+            {
+                _batchSize = FrameIntake.ClampBatch(batchSize);
+            }
+
+            foreach (var item in assigned)
+            {
+                if (!known.Add(item.DriverVideo))
+                {
+                    continue;
+                }
+
+                var output = AdoptExisting(outputDirectory, item.OutputName);
+                var exists = NonEmpty(output);
+                if (exists)
+                {
+                    if (string.IsNullOrEmpty(id))
+                    {
+                        id = (++_intakeSequence).ToString("D2");
+                        _intakeOrder.Add(id);
+                    }
+
+                    if (Remember(new KeptClip
+                    {
+                        IntakeId = id,
+                        IntakeName = intakeName,
+                        SourceFolder = fullSource,
+                        VideoPath = item.DriverVideo,
+                        FramePath = item.PrimaryFrame,
+                        BackgroundPath = item.PrimaryBackground,
+                        OutputPath = output
+                    }))
+                    {
+                        rememberedNow++;
+                    }
+
+                    continue;
+                }
+
+                Forget(item.DriverVideo);
+                var layerAssets = new Dictionary<string, string>(StringComparer.Ordinal);
+                var layerColors = new Dictionary<string, string>(StringComparer.Ordinal);
+                foreach (var entry in item.Layers)
+                {
+                    if (!string.IsNullOrWhiteSpace(entry.AssetPath))
+                    {
+                        layerAssets[entry.Layer.Id] = entry.AssetPath!;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(entry.ChosenTextColor))
+                    {
+                        layerColors[entry.Layer.Id] = entry.ChosenTextColor;
+                    }
+                }
+
+                var row = new JobRow
+                {
+                    Id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(item.DriverVideo)))[..16],
+                    IntakeName = intakeName,
+                    SourceFolder = fullSource,
+                    VideoPath = item.DriverVideo,
+                    FramePath = item.PrimaryFrame,
+                    BackgroundPath = item.PrimaryBackground,
+                    OutputPath = output,
+                    MirroredLeft = item.MirroredLeft,
+                    LayerAssets = layerAssets,
+                    LayerColors = layerColors,
+                    TemplateSnapshot = preset.Clone(),
+                    Promoted = false,
+                    State = FrameDesign.Wait,
+                    Status = FrameDesign.Wait
+                };
+                added.Add(row);
+                fresh.Add(row);
+            }
+
+            if (added.Count > 0)
+            {
+                if (string.IsNullOrEmpty(id))
+                {
+                    id = (++_intakeSequence).ToString("D2");
+                    _intakeOrder.Add(id);
+                }
+
+                foreach (var row in added)
+                {
+                    row.IntakeId = id;
+                    _items.Add(row);
+                }
+
+                FrameIntake.PromoteInitial(fresh, _batchSize);
+            }
+        }
+
+        if (added.Count == 0)
+        {
+            Log(rememberedNow == 0
+                ? $"Folder {intakeName} không có video mới."
+                : $"Folder {intakeName}: {rememberedNow} video đã có, không vào hàng.");
+            Changed?.Invoke();
+            RequestPersist();
+            return;
+        }
+
+        foreach (var row in added)
+        {
+            Jobs.Add(row);
+            Place(row);
+        }
+
+        Log($"Đã thêm nguồn {added[0].IntakeId} · {intakeName} (Mẫu: {preset.Name}): {fresh.Count} video cần làm. {rememberedNow} video đã có, không vào hàng. Hàng chính nhận tối đa {_batchSize} video mỗi folder.");
+        Changed?.Invoke();
+        RequestPersist();
+    }
+
     public void Start(FrameSettings settings, IReadOnlyList<string> frames, IReadOnlyList<string> backgrounds, string outputDirectory)
     {
         if (!Jobs.Any(row => row.State == FrameDesign.Wait))
@@ -275,7 +417,25 @@ public sealed class QueueController
                 }
 
                 Log("Đang làm cache, xong mới render.");
-                var mapping = await _engine.PrepareCacheAsync(frames, backgrounds, _cache, settings, _workersLimit, token).ConfigureAwait(false);
+                List<string> allFrames;
+                List<string> allBackgrounds;
+                lock (_gate)
+                {
+                    allFrames = frames
+                        .Concat(_items.Select(row => row.FramePath))
+                        .Where(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                        .Select(Path.GetFullPath)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                    allBackgrounds = backgrounds
+                        .Concat(_items.Select(row => row.BackgroundPath))
+                        .Where(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                        .Select(Path.GetFullPath)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                }
+
+                var mapping = await _engine.PrepareCacheAsync(allFrames, allBackgrounds, _cache, settings, _workersLimit, token).ConfigureAwait(false);
                 if (generation != _generation)
                 {
                     return;
@@ -463,8 +623,22 @@ public sealed class QueueController
         Log("Đã xóa hàng đợi.");
     }
 
-    public QueueSnapshot Capture(string videos, string frames, string backgrounds, string output, string scale, string opacity, string noise, string crf, string workers, bool gpu, bool random, int outputHeight) =>
-        new(videos, frames, backgrounds, output, scale, opacity, noise, crf, workers, gpu, random, _items.ToList(), _batchSize, _intakeSequence, _intakeOrder.ToList(), _kept.ToList(), FrameDesign.NormalizeOutputHeight(outputHeight));
+    public QueueSnapshot Capture(
+        string videos,
+        string frames,
+        string backgrounds,
+        string output,
+        string scale,
+        string opacity,
+        string noise,
+        string crf,
+        string workers,
+        bool gpu,
+        bool random,
+        int outputHeight,
+        List<FrameTemplatePreset>? presets = null,
+        string? selectedPresetName = null) =>
+        new(videos, frames, backgrounds, output, scale, opacity, noise, crf, workers, gpu, random, _items.ToList(), _batchSize, _intakeSequence, _intakeOrder.ToList(), _kept.ToList(), FrameDesign.NormalizeOutputHeight(outputHeight), presets, selectedPresetName);
 
     public void Save(QueueSnapshot snapshot)
     {
@@ -701,7 +875,38 @@ public sealed class QueueController
                     Changed?.Invoke();
                 }, null);
             });
-            await _engine.RenderAsync(job.VideoPath, background, frame, job.OutputPath, settings, progress, jobCts.Token, Log).ConfigureAwait(false);
+            if (job.TemplateSnapshot is not null && job.TemplateSnapshot.Layers.Count > 0)
+            {
+                var resolvedLayers = job.TemplateSnapshot.Layers
+                    .Where(layer => layer.Enabled)
+                    .Select(layer =>
+                    {
+                        var asset = layer.Kind == FrameLayerKind.MainVideo
+                            ? job.VideoPath
+                            : job.LayerAssets.TryGetValue(layer.Id, out var savedAsset) ? savedAsset : null;
+                        var color = job.LayerColors.TryGetValue(layer.Id, out var savedColor) ? savedColor : layer.TextColor;
+                        return new ResolvedLayerAsset(layer, asset, color);
+                    })
+                    .ToList();
+                var resolvedJob = new ResolvedTemplateJob(
+                    job.VideoPath,
+                    Path.GetFileName(job.OutputPath),
+                    job.MirroredLeft,
+                    resolvedLayers);
+                await _engine.RenderTemplateJobAsync(
+                    resolvedJob,
+                    job.TemplateSnapshot,
+                    job.OutputPath,
+                    settings,
+                    _mapping,
+                    progress,
+                    jobCts.Token,
+                    Log).ConfigureAwait(false);
+            }
+            else
+            {
+                await _engine.RenderAsync(job.VideoPath, background, frame, job.OutputPath, settings, progress, jobCts.Token, Log).ConfigureAwait(false);
+            }
             Finish(job, generation, FrameDesign.Done, "");
         }
         catch (OperationCanceledException)
@@ -1043,7 +1248,9 @@ public sealed record QueueSnapshot(
     int IntakeSequence = 0,
     List<string>? IntakeOrder = null,
     List<KeptClip>? Kept = null,
-    int OutputHeight = FrameDesign.Height);
+    int OutputHeight = FrameDesign.Height,
+    List<FrameTemplatePreset>? Presets = null,
+    string? SelectedPresetName = null);
 
 public sealed class KeptClip
 {

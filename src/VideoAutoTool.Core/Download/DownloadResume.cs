@@ -38,6 +38,19 @@ public static class DownloadResume
             || ext.Equals(".m4v", StringComparison.OrdinalIgnoreCase);
     }
 
+    public static bool IsAudioFile(string fileName)
+    {
+        if (fileName.EndsWith(".part", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var ext = Path.GetExtension(fileName);
+        return ext.Equals(".m4a", StringComparison.OrdinalIgnoreCase)
+            || ext.Equals(".mp3", StringComparison.OrdinalIgnoreCase)
+            || ext.Equals(".wav", StringComparison.OrdinalIgnoreCase);
+    }
+
     public static bool IsSubtitleFile(string fileName)
     {
         if (fileName.EndsWith(".part", StringComparison.OrdinalIgnoreCase))

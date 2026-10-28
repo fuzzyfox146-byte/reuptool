@@ -245,4 +245,171 @@ public class FrameBatchTests
         Assert.Equal(91, withKept[0].Done);
         Assert.Equal(92, withKept[0].Total);
     }
+
+    [Fact]
+    public void StandardThreeLayerPreset_UsesExactFastHardwareGraph()
+    {
+        var preset = FrameTemplatePreset.CreateDefault();
+        Assert.True(preset.IsStandardThreeLayer());
+
+        var job = new ResolvedTemplateJob(
+            "main.mp4",
+            "out.mp4",
+            MirroredLeft: false,
+            [
+                new ResolvedLayerAsset(preset.Layers[0], "bg.mp4", "#FFFFFF"),
+                new ResolvedLayerAsset(preset.Layers[1], "main.mp4", "#FFFFFF"),
+                new ResolvedLayerAsset(preset.Layers[2], "frame.png", "#FFFFFF")
+            ]);
+
+        var settings = new FrameSettings(Gpu: true);
+        var templateArgs = FrameTemplateRenderer.BuildRenderArgs(job, preset, "out.mp4", 10.0, true, settings);
+        var directArgs = FrameCommands.Render("main.mp4", "bg.mp4", "frame.png", "out.mp4", 10.0, true, settings, FrameLayoutMath.Create(settings));
+        Assert.Equal(directArgs, templateArgs);
+    }
+
+    [Fact]
+    public void MultiLayerTemplate_MatchesSubtitleByNumber_MirrorsAndAppliesEffectControls()
+    {
+        var temp = Path.Combine(Path.GetTempPath(), "vat-tpl-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(temp);
+        try
+        {
+            var bgDir = Path.Combine(temp, "bg");
+            var avDir = Path.Combine(temp, "avatar");
+            var waveDir = Path.Combine(temp, "wave");
+            var subDir = Path.Combine(temp, "sub");
+            Directory.CreateDirectory(bgDir);
+            Directory.CreateDirectory(avDir);
+            Directory.CreateDirectory(waveDir);
+            Directory.CreateDirectory(subDir);
+
+            var bg1 = Path.Combine(bgDir, "bg1.mp4");
+            var av1 = Path.Combine(avDir, "av1.png");
+            var av2 = Path.Combine(avDir, "av2.png");
+            var wv1 = Path.Combine(waveDir, "wave1.mp4");
+            var srt1 = Path.Combine(subDir, "001 Story One.en.srt");
+            var srt2 = Path.Combine(subDir, "002 Story Two.en.srt");
+            File.WriteAllText(bg1, "bg");
+            File.WriteAllText(av1, "av1");
+            File.WriteAllText(av2, "av2");
+            File.WriteAllText(wv1, "wv1");
+            File.WriteAllText(srt1, "1\n00:00:00,500 --> 00:00:02,000\nHello world\n");
+            File.WriteAllText(srt2, "1\n00:00:00,500 --> 00:00:02,000\nSecond clip\n");
+
+            var preset = FrameTemplatePreset.CreateStoryPreset(bgDir, avDir, waveDir, subDir);
+            preset.AudioSpeed = 1.1;
+            preset.Layers[1].FlipHorizontal = true;
+            preset.Layers[1].CropLeft = 0.05;
+            preset.Layers[1].Brightness = 0.1;
+            preset.Layers[1].KeyMode = FrameKeyMode.CustomColorKey;
+            preset.Layers[1].KeyColor = "#00FFAA";
+            preset.Layers[1].KeyTolerance = 0.22;
+            preset.Layers[1].KeySoftness = 0.10;
+
+            var drivers = new[]
+            {
+                Path.Combine(temp, "001 Story One.mp4"),
+                Path.Combine(temp, "002 Story Two.mp4")
+            };
+
+            var jobs = FrameTemplatePlanner.AssignJobs(drivers, preset, baseSeed: 42);
+            Assert.Equal(2, jobs.Count);
+            Assert.False(jobs[0].MirroredLeft);
+            Assert.True(jobs[1].MirroredLeft);
+            Assert.Equal(av1, jobs[0].Layers[1].AssetPath);
+            Assert.Equal(av2, jobs[1].Layers[1].AssetPath);
+            Assert.Equal(srt1, jobs[0].Layers[3].AssetPath);
+            Assert.Equal(srt2, jobs[1].Layers[3].AssetPath);
+            Assert.Equal("#F5A623", jobs[0].Layers[3].ChosenTextColor);
+            Assert.Equal("#FFFFFF", jobs[1].Layers[3].ChosenTextColor);
+
+            var assPath = Path.Combine(temp, "sub001.ass");
+            FrameTemplateRenderer.WriteSubtitleAss(
+                assPath,
+                jobs[0].Layers[3].Layer,
+                jobs[0].Layers[3].AssetPath,
+                jobs[0].Layers[3].ChosenTextColor,
+                new FrameSettings(),
+                durationSeconds: 10,
+                jobs[0].MirroredLeft);
+            Assert.True(File.Exists(assPath));
+
+            var args = FrameTemplateRenderer.BuildRenderArgs(
+                jobs[0],
+                preset,
+                Path.Combine(temp, "out.mp4"),
+                duration: 10,
+                withAudio: true,
+                new FrameSettings(Gpu: true),
+                new Dictionary<string, string> { ["sub"] = assPath });
+
+            var joined = string.Join(' ', args);
+            Assert.Contains("-vn", args);
+            Assert.Contains("hflip", joined);
+            Assert.Contains("crop=iw*0.95", joined);
+            Assert.Contains("eq=brightness=0.1", joined);
+            Assert.Contains("colorkey=0x00FFAA:0.22:0.1", joined);
+            Assert.Contains("lumakey=threshold=0", joined);
+            Assert.Contains("subtitles=filename=", joined);
+            Assert.Contains("atempo=1.1", joined);
+            Assert.Contains("h264_nvenc", args);
+        }
+        finally
+        {
+            if (Directory.Exists(temp))
+            {
+                Directory.Delete(temp, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public void TemplateHistoryUndoAndRedoRestoresLayerResizeAndUltraKey()
+    {
+        var preset = FrameTemplatePreset.CreateStoryPreset();
+        var history = new FrameTemplateHistory();
+        history.Reset(preset);
+        Assert.False(history.CanUndo);
+        Assert.False(history.CanRedo);
+
+        // Step 1: Resize avatar layer
+        var avatar = preset.Layers.First(l => l.Kind == FrameLayerKind.ImageOverlay);
+        var originalWidth = avatar.Width;
+        avatar.Width = 640;
+        avatar.Height = 520;
+        Assert.True(history.RecordChange(preset));
+        Assert.True(history.CanUndo);
+
+        // Step 2: Sample Ultra Key color
+        avatar.KeyMode = FrameKeyMode.CustomColorKey;
+        avatar.KeyColor = "#12AB34";
+        Assert.True(history.RecordChange(preset));
+
+        // Undo Step 2 -> back to resized layer without custom key
+        var afterUndo1 = history.Undo();
+        Assert.NotNull(afterUndo1);
+        var avatarUndo1 = afterUndo1!.Layers.First(l => l.Kind == FrameLayerKind.ImageOverlay);
+        Assert.Equal(640, avatarUndo1.Width);
+        Assert.Equal(FrameKeyMode.None, avatarUndo1.KeyMode);
+        Assert.True(history.CanRedo);
+
+        // Undo Step 1 -> back to original width
+        var afterUndo2 = history.Undo();
+        Assert.NotNull(afterUndo2);
+        var avatarUndo2 = afterUndo2!.Layers.First(l => l.Kind == FrameLayerKind.ImageOverlay);
+        Assert.Equal(originalWidth, avatarUndo2.Width);
+        Assert.False(history.CanUndo);
+
+        // Redo Step 1 & Step 2
+        var afterRedo1 = history.Redo();
+        Assert.NotNull(afterRedo1);
+        Assert.Equal(640, afterRedo1!.Layers.First(l => l.Kind == FrameLayerKind.ImageOverlay).Width);
+
+        var afterRedo2 = history.Redo();
+        Assert.NotNull(afterRedo2);
+        var avatarRedo2 = afterRedo2!.Layers.First(l => l.Kind == FrameLayerKind.ImageOverlay);
+        Assert.Equal(FrameKeyMode.CustomColorKey, avatarRedo2.KeyMode);
+        Assert.Equal("#12AB34", avatarRedo2.KeyColor);
+    }
 }

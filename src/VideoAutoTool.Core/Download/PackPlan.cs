@@ -8,7 +8,7 @@ public static class PackPlan
     [
         ChannelPlaylist.ToVideosUrl(request.ChannelUrl),
         "--playlist-items", playlistItem.ToString(),
-        "--cookies", tools.CookiesPath,
+        ..CookieArgs(tools),
         "--skip-download",
         "--print", "%(id)s",
         "--user-agent", YtDlpPlan.UserAgent,
@@ -19,7 +19,7 @@ public static class PackPlan
     [
         WatchUrl(videoId),
         "--no-playlist",
-        "--cookies", tools.CookiesPath,
+        ..CookieArgs(tools),
         "--skip-download",
         "--print", "%(id)s",
         "--user-agent", YtDlpPlan.UserAgent,
@@ -32,7 +32,18 @@ public static class PackPlan
         "--flat-playlist",
         "--skip-download",
         "--print", "%(id)s\t%(view_count)s\t%(playlist_index)s",
-        "--cookies", tools.CookiesPath,
+        ..CookieArgs(tools),
+        "--user-agent", YtDlpPlan.UserAgent,
+        "--no-warnings"
+    ];
+
+    public static IReadOnlyList<string> ChannelCatalog(DownloadTools tools, PackChannelRequest request) =>
+    [
+        ChannelPlaylist.ToVideosUrl(request.ChannelUrl),
+        "--flat-playlist",
+        "--skip-download",
+        "--print", "%(id)s\t%(playlist_index)s",
+        ..CookieArgs(tools),
         "--user-agent", YtDlpPlan.UserAgent,
         "--no-warnings"
     ];
@@ -46,6 +57,11 @@ public static class PackPlan
         int number)
     {
         var folder = PackFolders.Channel(request);
+        if (request.Media == PackMediaMode.Audio)
+        {
+            return AudioArgs(tools, folder, Target(tools, request, playlistIndex, number, videoId: null));
+        }
+
         return Target(tools, request, playlistIndex, number, videoId: null).Concat(
         [
             "--no-overwrites",
@@ -99,6 +115,11 @@ public static class PackPlan
         int number)
     {
         var folder = PackFolders.Channel(request);
+        if (request.Media == PackMediaMode.Audio)
+        {
+            return AudioArgs(tools, folder, Target(tools, request, playlistIndex: 0, number, videoId));
+        }
+
         return Target(tools, request, playlistIndex: 0, number, videoId).Concat(
         [
             "--no-overwrites",
@@ -204,6 +225,32 @@ public static class PackPlan
         ]).ToList();
     }
 
+    /// <summary>
+    /// Sound only, as AAC in .m4a so Premiere imports it directly. No video stream, no thumbnail or subtitles here.
+    /// </summary>
+    private static IReadOnlyList<string> AudioArgs(DownloadTools tools, string folder, IReadOnlyList<string> target) =>
+        target.Concat(
+        [
+            "--no-overwrites",
+            "--no-write-subs",
+            "--no-write-auto-subs",
+            "--no-write-thumbnail",
+            "--ffmpeg-location", tools.FfmpegLocation,
+            "--newline",
+            "--no-mtime",
+            "--format", "bestaudio[ext=m4a]/bestaudio/best",
+            "--extract-audio",
+            "--audio-format", "m4a",
+            "--audio-quality", "0",
+            "--no-write-playlist-metafiles",
+            "--fragment-retries", "10",
+            "--concurrent-fragments", "5",
+            "--geo-bypass",
+            "--match-filter", "!is_live",
+            "-P", "home:" + PackFolders.Audio(folder),
+            "-P", "temp:" + PackFolders.Temp(folder)
+        ]).ToList();
+
     private static IReadOnlyList<string> Target(
         DownloadTools tools,
         PackChannelRequest request,
@@ -217,7 +264,7 @@ public static class PackPlan
             [
                 WatchUrl(videoId),
                 "--no-playlist",
-                "--cookies", tools.CookiesPath,
+                ..CookieArgs(tools),
                 "--user-agent", YtDlpPlan.UserAgent,
                 "--windows-filenames",
                 "--retries", "10",
@@ -229,11 +276,15 @@ public static class PackPlan
         [
             ChannelPlaylist.ToVideosUrl(request.ChannelUrl),
             "--playlist-items", playlistIndex.ToString(),
-            "--cookies", tools.CookiesPath,
+            ..CookieArgs(tools),
             "--user-agent", YtDlpPlan.UserAgent,
             "--windows-filenames",
             "--retries", "10",
             "-o", OutputName(number)
         ];
     }
+    private static IEnumerable<string> CookieArgs(DownloadTools tools) =>
+        !string.IsNullOrWhiteSpace(tools.CookiesPath) && File.Exists(tools.CookiesPath)
+            ? ["--cookies", tools.CookiesPath]
+            : [];
 }

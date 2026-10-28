@@ -1,5 +1,18 @@
 namespace VideoAutoTool.Core.Download;
 
+/// <summary>What to fetch as the main media of each numbered item.</summary>
+public enum PackMediaMode
+{
+    /// <summary>Video (mp4, H.264/AAC) into the video folder.</summary>
+    Video,
+
+    /// <summary>Sound only (AAC .m4a) into the audio folder.</summary>
+    Audio,
+
+    /// <summary>No main media; only thumbnails and/or subtitles.</summary>
+    None
+}
+
 public sealed record PackChannelRequest(
     string RootFolder,
     string FolderName,
@@ -10,7 +23,9 @@ public sealed record PackChannelRequest(
     string Quality,
     bool OrderByViews = false,
     bool DownloadSubtitles = false,
-    string SubtitleLanguages = "");
+    string SubtitleLanguages = "",
+    PackMediaMode Media = PackMediaMode.Video,
+    bool DownloadThumbs = true);
 
 public sealed record PackDownloadResult(string ChannelFolder, DownloadStop Stop, string Detail);
 
@@ -28,6 +43,7 @@ public static class PackFolders
     public const string ThumbFolder = "thumb";
     public const string TempFolder = "temp";
     public const string SubFolder = "sub";
+    public const string AudioFolder = "audio";
 
     public static string? InvalidName(string? folderName)
     {
@@ -64,6 +80,15 @@ public static class PackFolders
 
     public static string Video(string channelFolder) => Path.Combine(channelFolder, VideoFolder);
 
+    public static string Audio(string channelFolder) => Path.Combine(channelFolder, AudioFolder);
+
+    /// <summary>Folder that holds the main media: sound-only files for the audio edition, video otherwise.</summary>
+    public static string Media(string channelFolder, PackChannelRequest request) =>
+        request.Media == PackMediaMode.Audio ? Audio(channelFolder) : Video(channelFolder);
+
+    public static Func<string, bool> MediaFilter(PackChannelRequest request) =>
+        request.Media == PackMediaMode.Audio ? DownloadResume.IsAudioFile : DownloadResume.IsVideoFile;
+
     public static string Thumb(string channelFolder) => Path.Combine(channelFolder, ThumbFolder);
 
     public static string Temp(string channelFolder) => Path.Combine(channelFolder, TempFolder);
@@ -76,8 +101,8 @@ public static class PackFolders
         for (var index = request.PlaylistStart; index <= request.PlaylistEnd; index++)
         {
             var number = request.NameStart + (index - request.PlaylistStart);
-            var needVideo = !DownloadResume.HasCompleted(videoDir, number, DownloadResume.IsVideoFile);
-            var needThumb = !DownloadResume.HasCompleted(thumbDir, number, DownloadResume.IsThumbnailFile);
+            var needVideo = request.Media != PackMediaMode.None && !DownloadResume.HasCompleted(videoDir, number, MediaFilter(request));
+            var needThumb = request.DownloadThumbs && !DownloadResume.HasCompleted(thumbDir, number, DownloadResume.IsThumbnailFile);
             var needSub = NeedsSub(subDir, request, number);
             if (needVideo || needThumb || needSub)
             {
@@ -96,12 +121,13 @@ public static class PackFolders
         string? subDir = null)
     {
         var items = new List<PackItem>();
-        for (var rank = request.PlaylistStart; rank <= request.PlaylistEnd; rank++)
+        var maxRank = request.PlaylistEnd <= 0 ? ranked.Count : Math.Min(request.PlaylistEnd, ranked.Count);
+        for (var rank = request.PlaylistStart; rank <= maxRank; rank++)
         {
             var entry = ranked[rank - 1];
             var number = request.NameStart + (rank - request.PlaylistStart);
-            var needVideo = !DownloadResume.HasCompleted(videoDir, number, DownloadResume.IsVideoFile);
-            var needThumb = !DownloadResume.HasCompleted(thumbDir, number, DownloadResume.IsThumbnailFile);
+            var needVideo = request.Media != PackMediaMode.None && !DownloadResume.HasCompleted(videoDir, number, MediaFilter(request));
+            var needThumb = request.DownloadThumbs && !DownloadResume.HasCompleted(thumbDir, number, DownloadResume.IsThumbnailFile);
             var needSub = NeedsSub(subDir, request, number);
             if (needVideo || needThumb || needSub)
             {

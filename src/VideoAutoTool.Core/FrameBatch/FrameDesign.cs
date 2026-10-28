@@ -30,6 +30,8 @@ public static class FrameDesign
     public const string Paused = "Tạm dừng";
 
     public static readonly string[] VideoExtensions = [".mp4", ".mkv", ".mov", ".webm", ".m4v"];
+    public static readonly string[] AudioExtensions = [".m4a", ".mp3", ".wav", ".aac", ".flac"];
+    public static readonly string[] DriverExtensions = [".mp4", ".mkv", ".mov", ".webm", ".m4v", ".m4a", ".mp3", ".wav", ".aac", ".flac"];
     public static readonly string[] FrameExtensions = [".png"];
 
     public static int ParallelVideos(int requested) => Math.Clamp(requested, 1, MaxParallelVideos);

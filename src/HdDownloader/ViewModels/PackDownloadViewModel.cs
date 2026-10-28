@@ -29,21 +29,16 @@ public partial class PackDownloadViewModel : ObservableObject
         ParallelOptions = [1, 2, 3, 4];
         SubtitleLanguageOptions =
         [
-            new PackQualityOption("en,ja,pt", UiText.SubLangEnJaPt),
-            new PackQualityOption("en", UiText.SubLangEn),
             new PackQualityOption("ja", UiText.SubLangJa),
-            new PackQualityOption("pt", UiText.SubLangPt),
-            new PackQualityOption("en,ja", UiText.SubLangEnJa),
-            new PackQualityOption("ja,pt", UiText.SubLangJaPt),
-            new PackQualityOption("en,pt", UiText.SubLangEnPt),
+            new PackQualityOption("en", UiText.SubLangEn),
+            new PackQualityOption("vi", UiText.SubLangVi),
             new PackQualityOption("ko", UiText.SubLangKo),
             new PackQualityOption("zh", UiText.SubLangZh),
+            new PackQualityOption("pt", UiText.SubLangPt),
             new PackQualityOption("es", UiText.SubLangEs),
             new PackQualityOption("fr", UiText.SubLangFr),
             new PackQualityOption("de", UiText.SubLangDe),
-            new PackQualityOption("vi", UiText.SubLangVi),
-            new PackQualityOption("th", UiText.SubLangTh),
-            new PackQualityOption("all", UiText.SubLangAll)
+            new PackQualityOption("th", UiText.SubLangTh)
         ];
         Load();
     }
@@ -80,14 +75,76 @@ public partial class PackDownloadViewModel : ObservableObject
     private bool _downloadSubtitles = PackSettingsStore.DefaultDownloadSubtitles;
 
     [ObservableProperty]
-    private string _subtitleLanguages = "en,ja,pt";
+    private string _subtitleLanguages = "ja";
 
-    public Visibility ViewOrderVisibility { get; } =
-#if HD_VIEW_EDITION
-        Visibility.Visible;
-#else
-        Visibility.Collapsed;
-#endif
+    [ObservableProperty]
+    private string _mediaMode = "video";
+
+    [ObservableProperty]
+    private bool _downloadThumbs = true;
+
+    [ObservableProperty]
+    private int _channelParallel = 2;
+
+    public IReadOnlyList<PackQualityOption> MediaModeOptions { get; } =
+    [
+        new PackQualityOption("video", UiText.MediaVideo),
+        new PackQualityOption("audio", UiText.MediaAudio),
+        new PackQualityOption("none", UiText.MediaNone)
+    ];
+
+    public IReadOnlyList<int> ChannelParallelOptions { get; } = [1, 2, 3, 4, 5];
+
+    /// <summary>Quality only matters when the main media is video.</summary>
+    public bool IsVideoMode => MediaMode == "video";
+
+    public Visibility ViewOrderVisibility { get; } = Visibility.Visible;
+
+    private PackMediaMode ToMedia() => MediaMode switch
+    {
+        "audio" => PackMediaMode.Audio,
+        "none" => PackMediaMode.None,
+        _ => PackMediaMode.Video
+    };
+
+    partial void OnMediaModeChanged(string value)
+    {
+        if (value is not ("video" or "audio" or "none"))
+        {
+            MediaMode = "video";
+            return;
+        }
+
+        OnPropertyChanged(nameof(IsVideoMode));
+        ApplyLayoutToRows();
+        Persist();
+    }
+
+    partial void OnDownloadThumbsChanged(bool value)
+    {
+        ApplyLayoutToRows();
+        Persist();
+    }
+
+    partial void OnChannelParallelChanged(int value)
+    {
+        var clamped = Math.Clamp(value, 1, PackDownloader.MaxChannelParallel);
+        if (clamped != value)
+        {
+            ChannelParallel = clamped;
+            return;
+        }
+
+        Persist();
+    }
+
+    private void ApplyLayoutToRows()
+    {
+        foreach (var row in Channels)
+        {
+            row.SetLayout(MediaMode, DownloadSubtitles, DownloadThumbs);
+        }
+    }
 
     [ObservableProperty]
     private bool _isRunning;
@@ -95,17 +152,32 @@ public partial class PackDownloadViewModel : ObservableObject
     [ObservableProperty]
     private string _status = UiText.Idle;
 
-    public void Save()
+    public void Save(bool explicitSave = false)
     {
         try
         {
             PackSettingsStore.Save(Capture());
+            if (explicitSave)
+            {
+                var time = DateTime.Now.ToString("HH:mm:ss");
+                var count = Channels.Count(c => !c.IsBlank);
+                var msg = $"[{time}] ✓ Đã lưu cài đặt và danh sách ({count} kênh) (Ctrl+S).";
+                LogLines.Insert(0, msg);
+                Status = $"✓ Đã lưu cài đặt ({time})";
+            }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             Status = ex.Message;
+            if (explicitSave)
+            {
+                LogLines.Insert(0, $"[Lỗi lưu cài đặt]: {ex.Message}");
+            }
         }
     }
+
+    [RelayCommand]
+    public void SaveExplicit() => Save(explicitSave: true);
 
     public void CancelAll() => _run?.Cancel();
 
@@ -263,11 +335,7 @@ public partial class PackDownloadViewModel : ObservableObject
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(CookiesPath) || !File.Exists(CookiesPath))
-        {
-            Status = UiText.MissingCookies;
-            return;
-        }
+        // Cookie is optional. If missing, it will download anonymously without cookies
 
         var ffmpeg = PackToolLocator.FindFfmpegDirectory(YtDlpPath);
         if (string.IsNullOrWhiteSpace(ffmpeg) || !File.Exists(Path.Combine(ffmpeg, "ffmpeg.exe")))
@@ -285,12 +353,14 @@ public partial class PackDownloadViewModel : ObservableObject
                 row.FolderName.Trim(),
                 row.ChannelUrl.Trim(),
                 row.PlaylistStart,
-                row.PlaylistEnd,
+                row.PlaylistEnd ?? 0,
                 row.NameStart,
                 Quality,
                 OrderByViews,
                 DownloadSubtitles,
-                SubtitleLanguages);
+                SubtitleLanguages,
+                ToMedia(),
+                DownloadThumbs);
             requests.Add(request);
             selected.Add(row);
             row.ResetProgress();
@@ -306,7 +376,7 @@ public partial class PackDownloadViewModel : ObservableObject
         var progress = new Progress<DownloadNotice>(notice => ShowNotice(notice));
         try
         {
-            var results = await _downloader.DownloadAllAsync(tools, requests, Parallel, progress, run.Token);
+            var results = await _downloader.DownloadAllAsync(tools, requests, Parallel, progress, run.Token, ChannelParallel);
             for (var i = 0; i < selected.Count; i++)
             {
                 selected[i].Status = results[i].Detail;
@@ -382,7 +452,7 @@ public partial class PackDownloadViewModel : ObservableObject
     }
 
     private PackChannelRequest ToRequest(PackChannelRowViewModel row) =>
-        new(RootFolder, row.FolderName, row.ChannelUrl, row.PlaylistStart, row.PlaylistEnd, row.NameStart, Quality, OrderByViews, DownloadSubtitles, SubtitleLanguages);
+        new(RootFolder, row.FolderName, row.ChannelUrl, row.PlaylistStart, row.PlaylistEnd ?? 0, row.NameStart, Quality, OrderByViews, DownloadSubtitles, SubtitleLanguages, ToMedia(), DownloadThumbs);
 
     private void Load()
     {
@@ -401,7 +471,10 @@ public partial class PackDownloadViewModel : ObservableObject
             DownloadSubtitles = saved.DownloadSubtitles;
             SubtitleLanguages = SubtitleLanguageOptions.Any(option => option.Id == saved.SubtitleLanguages)
                 ? saved.SubtitleLanguages
-                : "en,ja,pt";
+                : "ja";
+            MediaMode = saved.MediaMode is "video" or "audio" or "none" ? saved.MediaMode : "video";
+            DownloadThumbs = saved.DownloadThumbs;
+            ChannelParallel = Math.Clamp(saved.ChannelParallel == 0 ? 2 : saved.ChannelParallel, 1, PackDownloader.MaxChannelParallel);
             Channels.Clear();
             foreach (var channel in saved.Channels)
             {
@@ -409,7 +482,7 @@ public partial class PackDownloadViewModel : ObservableObject
                 row.FolderName = string.IsNullOrWhiteSpace(channel.FolderName) ? "HD036" : channel.FolderName;
                 row.ChannelUrl = channel.ChannelUrl ?? "";
                 row.PlaylistStart = channel.PlaylistStart < 1 ? 1 : channel.PlaylistStart;
-                row.PlaylistEnd = channel.PlaylistEnd < row.PlaylistStart ? row.PlaylistStart : channel.PlaylistEnd;
+                row.PlaylistEnd = channel.PlaylistEnd <= 0 ? null : (channel.PlaylistEnd < row.PlaylistStart ? row.PlaylistStart : channel.PlaylistEnd);
                 row.NameStart = channel.NameStart < 1 ? 1 : channel.NameStart;
                 Channels.Add(row);
             }
@@ -440,12 +513,15 @@ public partial class PackDownloadViewModel : ObservableObject
         OrderByViews = OrderByViews,
         DownloadSubtitles = DownloadSubtitles,
         SubtitleLanguages = SubtitleLanguages,
+        MediaMode = MediaMode,
+        DownloadThumbs = DownloadThumbs,
+        ChannelParallel = ChannelParallel,
         Channels = Channels.Select(row => new PackChannelSettings
         {
             FolderName = row.FolderName,
             ChannelUrl = row.ChannelUrl,
             PlaylistStart = row.PlaylistStart,
-            PlaylistEnd = row.PlaylistEnd,
+            PlaylistEnd = row.PlaylistEnd ?? 0,
             NameStart = row.NameStart
         }).ToList()
     };
@@ -454,7 +530,7 @@ public partial class PackDownloadViewModel : ObservableObject
     {
         var row = new PackChannelRowViewModel();
         row.SetRoot(RootFolder);
-        row.SetDownloadSubtitles(DownloadSubtitles);
+        row.SetLayout(MediaMode, DownloadSubtitles, DownloadThumbs);
         row.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName is nameof(PackChannelRowViewModel.FolderName)
@@ -473,11 +549,7 @@ public partial class PackDownloadViewModel : ObservableObject
 
     partial void OnDownloadSubtitlesChanged(bool value)
     {
-        foreach (var row in Channels)
-        {
-            row.SetDownloadSubtitles(value);
-        }
-
+        ApplyLayoutToRows();
         Persist();
     }
 
@@ -485,7 +557,7 @@ public partial class PackDownloadViewModel : ObservableObject
     {
         if (SubtitleLanguageOptions.All(option => option.Id != value))
         {
-            SubtitleLanguages = "en,ja,pt";
+            SubtitleLanguages = "ja";
             return;
         }
 
