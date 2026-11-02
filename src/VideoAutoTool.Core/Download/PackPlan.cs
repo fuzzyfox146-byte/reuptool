@@ -12,6 +12,7 @@ public static class PackPlan
         "--skip-download",
         "--print", "%(id)s",
         "--user-agent", YtDlpPlan.UserAgent,
+        "--socket-timeout", "30",
         "--no-warnings"
     ];
 
@@ -23,6 +24,7 @@ public static class PackPlan
         "--skip-download",
         "--print", "%(id)s",
         "--user-agent", YtDlpPlan.UserAgent,
+        "--socket-timeout", "30",
         "--no-warnings"
     ];
 
@@ -34,6 +36,7 @@ public static class PackPlan
         "--print", "%(id)s\t%(view_count)s\t%(playlist_index)s",
         ..CookieArgs(tools),
         "--user-agent", YtDlpPlan.UserAgent,
+        "--socket-timeout", "30",
         "--no-warnings"
     ];
 
@@ -45,6 +48,7 @@ public static class PackPlan
         "--print", "%(id)s\t%(playlist_index)s",
         ..CookieArgs(tools),
         "--user-agent", YtDlpPlan.UserAgent,
+        "--socket-timeout", "30",
         "--no-warnings"
     ];
 
@@ -268,6 +272,7 @@ public static class PackPlan
                 "--user-agent", YtDlpPlan.UserAgent,
                 "--windows-filenames",
                 "--retries", "10",
+            "--socket-timeout", "30",
                 "-o", OutputName(number)
             ];
         }
@@ -280,6 +285,7 @@ public static class PackPlan
             "--user-agent", YtDlpPlan.UserAgent,
             "--windows-filenames",
             "--retries", "10",
+            "--socket-timeout", "30",
             "-o", OutputName(number)
         ];
     }

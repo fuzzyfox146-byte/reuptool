@@ -272,10 +272,7 @@ public sealed class PackDownloader
             {
                 if (request.DownloadSubtitles)
                 {
-                    for (var number = firstNumber; number <= lastNumber; number++)
-                    {
-                        DeleteDuplicateSubtitles(subDir, number, request.SubtitleLanguages);
-                    }
+                    DeleteAllDuplicateSubtitles(subDir, request.SubtitleLanguages);
                 }
 
                 await FinishParkedVideosAsync(tools, parked, log, CancellationToken.None).ConfigureAwait(false);
@@ -651,6 +648,26 @@ public sealed class PackDownloader
         VttToSrt.ConvertFolder(folder);
     }
 
+    private static void DeleteAllDuplicateSubtitles(string folder, string? languages)
+    {
+        if (!Directory.Exists(folder))
+        {
+            return;
+        }
+
+        var numbers = Directory.EnumerateFiles(folder)
+            .Select(path => LeadingNumber(Path.GetFileName(path)))
+            .Where(num => num.HasValue)
+            .Select(num => num!.Value)
+            .Distinct()
+            .ToList();
+
+        foreach (var number in numbers)
+        {
+            DeleteDuplicateSubtitles(folder, number, languages);
+        }
+    }
+
     private static void DeleteDuplicateSubtitles(string folder, int number, string? languages)
     {
         if (!Directory.Exists(folder))
@@ -693,7 +710,7 @@ public sealed class PackDownloader
         {
             var fileName = Path.GetFileName(path);
             var number = LeadingNumber(fileName);
-            if (!DownloadResume.IsVideoFile(fileName) || number is null || number < firstNumber || number > lastNumber)
+            if (!DownloadResume.IsVideoFile(fileName) || number is null || number < firstNumber || (lastNumber < int.MaxValue && number > lastNumber))
             {
                 continue;
             }

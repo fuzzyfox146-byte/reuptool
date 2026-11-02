@@ -9,6 +9,12 @@ public static class CookieFailure
             return false;
         }
 
+        // Warnings from yt-dlp (e.g. cookie rotation warning) are non-fatal; yt-dlp continues running and can download public videos!
+        if (line.StartsWith("WARNING:", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
         return line.Contains("cookies are no longer valid", StringComparison.OrdinalIgnoreCase)
             || line.Contains("Sign in to confirm", StringComparison.OrdinalIgnoreCase)
             || line.Contains("not a bot", StringComparison.OrdinalIgnoreCase)
