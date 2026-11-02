@@ -84,7 +84,7 @@ public partial class PackDownloadViewModel : ObservableObject
     private bool _downloadThumbs = true;
 
     [ObservableProperty]
-    private int _channelParallel = 2;
+    private int _channelParallel = 3;
 
     public IReadOnlyList<PackQualityOption> MediaModeOptions { get; } =
     [
@@ -93,7 +93,7 @@ public partial class PackDownloadViewModel : ObservableObject
         new PackQualityOption("none", UiText.MediaNone)
     ];
 
-    public IReadOnlyList<int> ChannelParallelOptions { get; } = [1, 2, 3, 4, 5];
+    public IReadOnlyList<int> ChannelParallelOptions { get; } = [1, 2, 3, 4, 5, 6, 8, 10, 15, 20];
 
     /// <summary>Quality only matters when the main media is video.</summary>
     public bool IsVideoMode => MediaMode == "video";
@@ -420,13 +420,16 @@ public partial class PackDownloadViewModel : ObservableObject
         var selected = new List<PackChannelRowViewModel>();
         foreach (var row in rows)
         {
+            var start = row.PlaylistStart <= 0 ? 1 : row.PlaylistStart;
+            var end = row.PlaylistEnd.GetValueOrDefault(0);
+            var nameStart = row.NameStart <= 0 ? 1 : row.NameStart;
             var request = new PackChannelRequest(
                 RootFolder.Trim(),
                 row.FolderName.Trim(),
                 row.ChannelUrl.Trim(),
-                row.PlaylistStart,
-                row.PlaylistEnd ?? 0,
-                row.NameStart,
+                start,
+                end,
+                nameStart,
                 Quality,
                 OrderByViews,
                 DownloadSubtitles,
@@ -436,7 +439,7 @@ public partial class PackDownloadViewModel : ObservableObject
             requests.Add(request);
             selected.Add(row);
             row.ResetProgress();
-            row.Status = UiText.Running;
+            row.Status = "Chờ đến lượt...";
             row.IsBusy = true;
         }
 
@@ -446,9 +449,24 @@ public partial class PackDownloadViewModel : ObservableObject
         IsRunning = true;
         Status = UiText.Busy;
         var progress = new Progress<DownloadNotice>(notice => ShowNotice(notice));
+        var progressState = new Progress<(int Index, string State)>(p =>
+        {
+            if (p.Index >= 0 && p.Index < selected.Count)
+            {
+                selected[p.Index].Status = p.State;
+            }
+        });
+
         try
         {
-            var results = await _downloader.DownloadAllAsync(tools, requests, Parallel, progress, run.Token, ChannelParallel);
+            var results = await _downloader.DownloadAllAsync(
+                tools,
+                requests,
+                Parallel,
+                progress,
+                run.Token,
+                ChannelParallel,
+                (idx, state) => ((IProgress<(int, string)>)progressState).Report((idx, state)));
             for (var i = 0; i < selected.Count; i++)
             {
                 selected[i].Status = results[i].Detail;

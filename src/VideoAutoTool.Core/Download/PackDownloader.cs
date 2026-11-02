@@ -5,8 +5,7 @@ namespace VideoAutoTool.Core.Download;
 public sealed class PackDownloader
 {
     public const int MaxParallel = 4;
-    public const int MaxChannelParallel = 5;
-
+    public const int MaxChannelParallel = 20;
 
     private readonly IYtDlpRunner _runner;
 
@@ -29,43 +28,57 @@ public sealed class PackDownloader
         int parallel,
         IProgress<DownloadNotice>? log,
         CancellationToken cancellationToken,
-        int channelParallel = MaxChannelParallel)
+        int channelParallel = MaxChannelParallel,
+        Action<int, string>? onChannelState = null)
     {
-        // parallel = items at once inside ONE channel; channelParallel = channels running at the same time.
-        // Each channel has its own item gate, so a big channel cannot starve the others.
         parallel = Math.Clamp(parallel, 1, MaxParallel);
         channelParallel = Math.Clamp(channelParallel, 1, MaxChannelParallel);
         var results = new PackDownloadResult[channels.Count];
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         using var channelGate = new SemaphoreSlim(channelParallel);
-        var cookie = 0;
         var tasks = new Task[channels.Count];
         for (var i = 0; i < channels.Count; i++)
         {
             var index = i;
             tasks[i] = Task.Run(async () =>
             {
+                // Each channel has its own cancellation token linked to user's cancel token
+                using var channelCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 try
                 {
-                    await channelGate.WaitAsync(linked.Token).ConfigureAwait(false);
+                    onChannelState?.Invoke(index, "Chờ đến lượt...");
+                    await channelGate.WaitAsync(channelCts.Token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
                 {
+                    results[index] = new PackDownloadResult(PackFolders.Channel(channels[index]), DownloadStop.Cancelled, "Đã dừng.");
+                    onChannelState?.Invoke(index, "Đã dừng.");
                     return;
                 }
 
                 try
                 {
+                    onChannelState?.Invoke(index, "Đang tải...");
+                    var channelCookieDead = 0;
                     await RunChannelAsync(
                         tools,
                         channels[index],
                         new SemaphoreSlim(parallel),
                         log,
-                        linked,
+                        channelCts,
                         cancellationToken,
-                        () => Interlocked.Exchange(ref cookie, 1),
-                        () => Volatile.Read(ref cookie) == 1,
-                        value => results[index] = value).ConfigureAwait(false);
+                        () => Interlocked.Exchange(ref channelCookieDead, 1),
+                        () => Volatile.Read(ref channelCookieDead) == 1,
+                        value =>
+                        {
+                            results[index] = value;
+                            onChannelState?.Invoke(index, value.Detail);
+                        }).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    var msg = "Lỗi: " + ex.Message;
+                    results[index] = new PackDownloadResult(PackFolders.Channel(channels[index]), DownloadStop.Failed, msg);
+                    onChannelState?.Invoke(index, msg);
                 }
                 finally
                 {

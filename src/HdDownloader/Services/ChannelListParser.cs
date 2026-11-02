@@ -103,3 +103,4 @@ public static class ChannelListParser
         return name[..index] + (number + 1).ToString().PadLeft(width, '0');
     }
 }
+
