@@ -96,8 +96,13 @@
                 </WrapPanel>
             </StackPanel>
             <StackPanel Grid.Column="1">
-                <Button Content="{x:Static t:UiText.AddChannel}" Margin="0,0,0,8" Padding="8,8"
+                <Button Content="📋 Dán danh sách (Excel)" Margin="0,0,0,8" Padding="8,8"
+                        Background="#007ACC" FontWeight="SemiBold"
+                        Command="{Binding OpenPasteDialogCommand}"/>
+                <Button Content="{x:Static t:UiText.AddChannel}" Margin="0,0,0,8" Padding="8,6"
                         Command="{Binding AddChannelCommand}"/>
+                <Button Content="Xóa danh sách" Margin="0,0,0,8" Padding="8,6"
+                        Command="{Binding ClearChannelsCommand}"/>
                 <Button Content="{x:Static t:UiText.StartAll}" Margin="0,0,0,8" Padding="8,8"
                         Command="{Binding StartAllCommand}"
                         IsEnabled="{Binding CanStart}"/>

@@ -238,6 +238,78 @@ public partial class PackDownloadViewModel : ObservableObject
         }
     }
 
+    public event Action? RequestOpenPasteDialog;
+
+    [RelayCommand]
+    private void OpenPasteDialog() => RequestOpenPasteDialog?.Invoke();
+
+    [RelayCommand]
+    private void ClearChannels()
+    {
+        var busy = Channels.Where(c => c.IsBusy).ToList();
+        Channels.Clear();
+        foreach (var b in busy)
+        {
+            Channels.Add(b);
+        }
+        if (Channels.Count == 0)
+        {
+            Channels.Add(CreateRow());
+        }
+        Save();
+        var msg = "Đã xóa danh sách kênh.";
+        LogLines.Insert(0, $"[{DateTime.Now:HH:mm:ss}] {msg}");
+        Status = msg;
+    }
+
+    public int ImportChannels(IReadOnlyList<ParsedChannel> entries, bool replaceExisting = true)
+    {
+        if (entries.Count == 0)
+        {
+            return 0;
+        }
+
+        if (string.IsNullOrWhiteSpace(RootFolder))
+        {
+            RootFolder = Directory.Exists(@"D:\") ? @"D:\" : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        }
+
+        if (replaceExisting)
+        {
+            var busy = Channels.Where(c => c.IsBusy).ToList();
+            Channels.Clear();
+            foreach (var b in busy)
+            {
+                Channels.Add(b);
+            }
+        }
+        else
+        {
+            var blanks = Channels.Where(c => c.IsBlank && !c.IsBusy).ToList();
+            foreach (var b in blanks)
+            {
+                Channels.Remove(b);
+            }
+        }
+
+        foreach (var item in entries)
+        {
+            var row = CreateRow();
+            row.FolderName = item.FolderName;
+            row.ChannelUrl = item.ChannelUrl;
+            row.PlaylistStart = 1;
+            row.PlaylistEnd = null; // Tải hết kênh
+            row.NameStart = 1;
+            Channels.Add(row);
+        }
+
+        Save();
+        var msg = $"✓ Đã nhập {entries.Count} kênh vào danh sách tải!";
+        LogLines.Insert(0, $"[{DateTime.Now:HH:mm:ss}] {msg}");
+        Status = msg;
+        return entries.Count;
+    }
+
     [RelayCommand]
     private void AddChannel()
     {

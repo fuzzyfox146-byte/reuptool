@@ -251,7 +251,9 @@ public sealed class PackDownloader
             set(new PackDownloadResult(
                 folder,
                 DownloadStop.Completed,
-                $"Xong {label}. {Describe(request)} đánh số từ {request.NameStart:000}."));
+                request.DownloadSubtitles
+                    ? $"Xong {label}. {Describe(request)} đánh số từ {request.NameStart:000}."
+                    : $"Xong {label}. {Describe(request)} đánh số từ {request.NameStart:000}. Không tải phụ đề."));
             }
             finally
             {
@@ -586,6 +588,14 @@ public sealed class PackDownloader
         }
 
         var ranked = PackViewRank.Order(PackViewRank.Parse(lines.Lines));
+        if (request.PlaylistEnd > 0 && ranked.Count < request.PlaylistEnd)
+        {
+            return ([], new PackDownloadResult(
+                PackFolders.Channel(request),
+                DownloadStop.Failed,
+                $"Kênh có {ranked.Count} video, không đủ đến hạng {request.PlaylistEnd} theo view."));
+        }
+
         if (ranked.Count < request.PlaylistStart)
         {
             return ([], new PackDownloadResult(
