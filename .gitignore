@@ -4,16 +4,41 @@ obj/
 .vs/
 *.user
 *.suo
+*.userosscache
+*.sln.docstates
 publish/
+publish-*/
+[Pp]ublish*/
 TestResults/
-## Project
+
+## Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+
+## Archives & Releases
+*.zip
+*.rar
+*.7z
+*.tar.gz
+
+## Project & Local cache
 testdata/
 /cache/
 *.part
+*.backup
+*.bak
 tools/ffmpeg/*.exe
 tools/ffmpeg/*.dll
 tools/cache/
 src/VideoAutoTool.Core/Cache/test.txt
+
+## Local scratch & standalone tools
+Download video/
+Upvideo/
+
 ## Media
 *.mp4
 *.mov
@@ -22,6 +47,8 @@ src/VideoAutoTool.Core/Cache/test.txt
 *.webm
 *.wav
 *.mp3
+*.m4a
+
 ## OS
 Thumbs.db
 .DS_Store
