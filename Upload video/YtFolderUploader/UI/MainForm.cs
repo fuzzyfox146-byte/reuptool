@@ -512,29 +512,42 @@ public sealed partial class MainForm : Form
     {
         var page = new TabPage("Tùy chọn đăng");
         var stack = new FormStack();
-        stack.AddLabel("Mẫu đăng của KÊNH ĐANG CHỌN (kênh bên trái). Chọn \"Riêng kênh này\" nếu kênh cần giờ khác hẳn, không ảnh hưởng kênh nào. Chọn một mẫu thì mọi kênh cùng mẫu đổi giờ theo khi bấm Lưu / Ctrl+S.");
-        cboTemplate = stack.Add(new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList }, 28);
+
+        // 1. ĐƯA PHẦN THẺ (TAGS) VÀ MÔ TẢ LÊN ĐẦU TRANG ĐỂ ĐIỀN NHANH VÀ RÕ RÀNG
+        stack.AddLabel("Thẻ (Tags), cách nhau bởi dấu phẩy. YouTube giới hạn 500 ký tự:");
+        txtTags = stack.Add(new TextBox { Multiline = true, ScrollBars = ScrollBars.Vertical }, 65);
+        txtTags.TextChanged += OnEdited;
+
+        stack.AddLabel("Mô tả. Có thể dùng {title} {index} {source} {filename}:");
+        txtDescription = stack.Add(new TextBox { Multiline = true, ScrollBars = ScrollBars.Vertical, AcceptsReturn = true }, 80);
+        txtDescription.TextChanged += OnEdited;
+
+        // 2. MẪU ĐĂNG GỌN GÀNG VỚI NÚT MỞ POPUP CÀI ĐẶT
+        stack.AddLabel("Mẫu cấu hình & giờ đăng của kênh đang chọn:");
+        var templateSelectRow = new FlowLayoutPanel { Height = 34, WrapContents = false, AutoSize = true };
+        cboTemplate = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 380, Margin = new Padding(0, 2, 8, 2) };
         cboTemplate.SelectedIndexChanged += (_, _) => ApplySelectedTemplate();
-        stack.AddLabel("Tên mẫu (gõ tên rồi bấm ra ngoài ô để đổi). Tên không tự đổi khi sửa giờ.");
-        txtTemplateName = stack.Add(new TextBox(), 28);
-        txtTemplateName.Leave += (_, _) => RenameTemplate();
-        var templateRow = new FlowLayoutPanel { Height = 72, WrapContents = true };
-        templateRow.Controls.Add(MakeButton("Thêm mẫu", AddTemplate));
-        templateRow.Controls.Add(MakeButton("Xóa mẫu", DeleteTemplate));
-        templateRow.Controls.Add(MakeButton("Dùng mẫu này", ApplySelectedTemplate));
-        stack.Add(templateRow, 72);
+        var btnOpenManage = MakeButton("⚙ Quản lý / Thêm mẫu mới...", OpenManageTemplatesDialog);
+        templateSelectRow.Controls.Add(cboTemplate);
+        templateSelectRow.Controls.Add(btnOpenManage);
+        stack.Add(templateSelectRow, 34);
+
+        txtTemplateName = new TextBox { Visible = false }; // ẩn input text cũ để tương thích code
         lblTemplateHint = stack.AddLabel("Chưa có mẫu.");
-        stack.AddLabel("Số video công khai mỗi ngày");
+
+        stack.AddLabel("Số video công khai mỗi ngày:");
         numPerDay = stack.Add(new NumericUpDown { Minimum = 1, Maximum = 50, Value = 3 }, 28);
         numPerDay.ValueChanged += (sender, e) =>
         {
             OnEdited(sender, e);
             RefreshQueueFromSettings();
         };
-        stack.AddLabel("Giờ công khai, mỗi dòng một giờ. Bật ô dưới thì mỗi ngày chỉ dùng đúng các giờ này, không tự thêm giờ.");
+
+        stack.AddLabel("Giờ công khai, mỗi dòng một giờ (ví dụ 09:00):");
         txtTimes = stack.Add(new TextBox { Multiline = true, ScrollBars = ScrollBars.Vertical, AcceptsReturn = true }, 80);
         txtTimes.TextChanged += OnEdited;
         txtTimes.Leave += (_, _) => RefreshQueueFromSettings();
+
         chkExactDays = stack.Add(new CheckBox { Text = "Lên lịch trước 1 ngày, đúng các giờ này. App còn mở thì tự đăng ngày tiếp theo. Thiếu video cho một ngày thì dừng và tên kênh báo đỏ.", Checked = true }, 52);
         chkExactDays.CheckedChanged += (_, _) =>
         {
@@ -545,6 +558,7 @@ public sealed partial class MainForm : Form
                 StopAuto();
             RefreshQueueFromSettings();
         };
+
         chkDeleteAfter = stack.Add(new CheckBox { Text = "Sau khi đăng thành công, xóa vĩnh viễn cả video và thumbnail. Không đưa vào thùng rác.", Checked = false }, 36);
         chkDeleteAfter.CheckedChanged += (_, _) =>
         {
@@ -552,7 +566,8 @@ public sealed partial class MainForm : Form
                 return;
             _current.Options.DeleteSourceAfterUpload = chkDeleteAfter.Checked;
         };
-        stack.AddLabel("Ngày bắt đầu xếp lịch");
+
+        stack.AddLabel("Ngày bắt đầu xếp lịch:");
         dtpStart = stack.Add(new DateTimePicker { Format = DateTimePickerFormat.Short }, 28);
         dtpStart.MinDate = DateTime.Today.AddDays(-1);
         dtpStart.MaxDate = DateTime.Today.AddYears(2);
@@ -566,12 +581,14 @@ public sealed partial class MainForm : Form
         };
         lblDefer = stack.AddLabel("Lịch không bị lùi.");
         btnClearDefer = stack.Add(MakeButton("Bỏ lùi lịch, dùng đúng ngày đã chọn", ClearDefer), 34);
-        stack.AddLabel("Múi giờ của giờ công khai");
+
+        stack.AddLabel("Múi giờ của giờ công khai:");
         cboTimeZone = stack.Add(new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList }, 28);
         foreach (var (id, label) in TimeZones.Choices)
             cboTimeZone.Items.Add(new LabeledCode { Code = id, Label = label });
         cboTimeZone.SelectedIndexChanged += OnEdited;
-        stack.AddLabel("Chế độ đăng");
+
+        stack.AddLabel("Chế độ đăng:");
         cboPrivacy = stack.Add(new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList }, 28);
         AddCodes(cboPrivacy,
             ("scheduled", "Hẹn giờ — upload riêng tư, public đúng giờ đã xếp"),
@@ -579,12 +596,6 @@ public sealed partial class MainForm : Form
             ("unlisted", "Không công khai ngay"),
             ("public", "Công khai ngay"));
         cboPrivacy.SelectedIndexChanged += OnEdited;
-        stack.AddLabel("Mô tả. Có thể dùng {title} {index} {source} {filename}");
-        txtDescription = stack.Add(new TextBox { Multiline = true, ScrollBars = ScrollBars.Vertical, AcceptsReturn = true }, 90);
-        txtDescription.TextChanged += OnEdited;
-        stack.AddLabel("Thẻ, cách nhau bởi dấu phẩy. YouTube giới hạn 500 ký tự.");
-        txtTags = stack.Add(new TextBox { Multiline = true, ScrollBars = ScrollBars.Vertical }, 60);
-        txtTags.TextChanged += OnEdited;
         stack.AddLabel("Quốc gia dùng để tải danh sách thể loại");
         cboRegion = stack.Add(new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList }, 28);
         AddCodes(cboRegion, ("JP", "Nhật Bản"), ("VN", "Việt Nam"), ("US", "Hoa Kỳ"), ("KR", "Hàn Quốc"), ("TW", "Đài Loan"), ("TH", "Thái Lan"));
@@ -1057,20 +1068,30 @@ public sealed partial class MainForm : Form
             : $"Đang sửa khác mẫu \"{linked.Name}\". Bấm Lưu để cập nhật mẫu cho {shared} Hoặc bấm Dùng mẫu này để bỏ thay đổi.";
     }
 
-    void AddTemplate()
+    void OpenManageTemplatesDialog()
     {
         if (_current == null)
-            return;
-        WriteCurrent();
-        var created = UploadTemplates.AddCopy(_data, _current);
-        _store.Save(_data);
-        BindTemplates();
-        Log($"Đã tạo mẫu \"{created.Name}\" từ cấu hình của {_current.Name}. Chỉ kênh này chuyển sang mẫu mới, kênh khác vẫn dùng mẫu cũ. Gõ tên mẫu rồi sửa giờ và bấm Lưu.");
-        if (txtTemplateName.Enabled)
         {
-            txtTemplateName.Focus();
-            txtTemplateName.SelectAll();
+            MessageBox.Show(this, "Hãy chọn một kênh trước.", "Thông báo", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
         }
+
+        WriteCurrent();
+        using var dlg = new ManageTemplatesDialog(_data, _current);
+        dlg.ShowDialog(this);
+        if (dlg.Changed)
+        {
+            _store.Save(_data);
+            BindTemplates();
+            ReadOptions(_current);
+            RefreshQueueFromSettings();
+            Log($"Đã cập nhật cấu hình mẫu cho kênh {_current.Name}.");
+        }
+    }
+
+    void AddTemplate()
+    {
+        OpenManageTemplatesDialog();
     }
 
     void DeleteTemplate()
