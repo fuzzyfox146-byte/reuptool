@@ -314,7 +314,7 @@ public class UploaderTests
         Assert.True(created.Created);
         Assert.Equal(2, data.Templates.Count);
         Assert.NotEqual(first.TemplateId, second.TemplateId);
-        Assert.Contains("3 video/ngày", created.Template.Name, StringComparison.Ordinal);
+        Assert.StartsWith("Mẫu", created.Template.Name, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -381,7 +381,8 @@ public class UploaderTests
         Assert.Single(data.Templates);
         Assert.Equal(first.TemplateId, second.TemplateId);
         Assert.Contains("22:00", second.Options.TimeSlotsText, StringComparison.Ordinal);
-        Assert.Contains("22:00", data.Templates[0].Name, StringComparison.Ordinal);
+        Assert.StartsWith("Mẫu", data.Templates[0].Name, StringComparison.Ordinal);
+        Assert.DoesNotContain("22:00", data.Templates[0].Name, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -417,27 +418,140 @@ public class UploaderTests
         UploadTemplates.SaveInto(data, channel);
 
         Assert.Equal("Khung giờ tối", sync.Template.Name);
-        Assert.Contains("05:00", sync.Template.Options.TimeSlotsText, StringComparison.Ordinal);
+        Assert.Equal("22:00", sync.Template.Options.TimeSlotsText);
         Assert.Equal("22:00", channel.Options.TimeSlotsText);
     }
 
     [Fact]
-    public void Template_RepairRestoresScheduleWrittenInTheName()
+    public void Template_Key_IgnoresPerChannelStartDateRecordingDateAndPlaylist()
+    {
+        var left = SampleOptions(5);
+        left.ScheduleStartDate = new DateOnly(2026, 11, 1);
+        left.RecordingDate = new DateOnly(2026, 11, 1);
+        left.PlaylistId = "PLaaaaaaaaaaaaaaaa";
+        var right = SampleOptions(5);
+        right.ScheduleStartDate = new DateOnly(2026, 12, 9);
+        right.RecordingDate = new DateOnly(2026, 12, 9);
+        right.PlaylistId = "PLbbbbbbbbbbbbbbbb";
+
+        Assert.Equal(UploadTemplates.KeyOf(left), UploadTemplates.KeyOf(right));
+    }
+
+    [Fact]
+    public void Template_SaveInto_KeepsEachChannelsOwnStartDateAndPlaylist()
     {
         var data = new AppData();
-        var template = new UploadTemplate
-        {
-            Name = "4 video/ngày · 08:30, 12:30, 16:30, 21:00",
-            NameIsCustom = true,
-            Options = SampleOptions(5)
-        };
-        template.Options.TimeSlotsText = "05:00\n10:00\n15:00\n18:00\n20:00";
-        data.Templates.Add(template);
+        var first = new ChannelProfile { Name = "A", Options = SampleOptions(5) };
+        var second = new ChannelProfile { Name = "B", Options = SampleOptions(5) };
+        second.Options.ScheduleStartDate = new DateOnly(2026, 12, 25);
+        second.Options.PlaylistId = "PLmine";
+        data.Channels.Add(first);
+        data.Channels.Add(second);
+        UploadTemplates.EnsureMissing(data);
 
-        Assert.True(UploadTemplates.RepairNamedSchedules(data));
-        Assert.Equal(4, template.Options.VideosPerDay);
-        Assert.Equal("08:30\r\n12:30\r\n16:30\r\n21:00", template.Options.TimeSlotsText);
-        Assert.False(UploadTemplates.RepairNamedSchedules(data));
+        first.Options.TimeSlotsText = "06:00\n07:00";
+        UploadTemplates.SaveInto(data, first);
+
+        Assert.Contains("07:00", second.Options.TimeSlotsText, StringComparison.Ordinal);
+        Assert.Equal(new DateOnly(2026, 12, 25), second.Options.ScheduleStartDate);
+        Assert.Equal("PLmine", second.Options.PlaylistId);
+    }
+
+    [Fact]
+    public void Template_DetachedChannel_IsNeverChangedByAnotherChannelsSave()
+    {
+        var data = new AppData();
+        var shared = new ChannelProfile { Name = "A", Options = SampleOptions(5) };
+        var own = new ChannelProfile { Name = "B", Options = SampleOptions(5) };
+        data.Channels.Add(shared);
+        data.Channels.Add(own);
+        UploadTemplates.EnsureMissing(data);
+        UploadTemplates.Detach(own);
+
+        shared.Options.VideosPerDay = 2;
+        UploadTemplates.SaveInto(data, shared);
+        own.Options.VideosPerDay = 4;
+        UploadTemplates.SaveInto(data, own);
+
+        Assert.Equal(4, own.Options.VideosPerDay);
+        Assert.Equal(2, data.Templates.Single().Options.VideosPerDay);
+        Assert.Equal("", own.TemplateId);
+    }
+
+    [Fact]
+    public void Template_Consolidate_MergesDuplicatesAndRelinksChannels()
+    {
+        var data = new AppData();
+        var keep = new UploadTemplate { Name = "Mafia", NameIsCustom = true, Options = SampleOptions(3) };
+        var dupe = new UploadTemplate { Name = "3 video/ngày · 05:00, 10:00, 15:00 (2)", Options = SampleOptions(3) };
+        dupe.Options.ScheduleStartDate = new DateOnly(2026, 11, 20);
+        dupe.Options.RecordingDate = new DateOnly(2026, 11, 20);
+        var other = new UploadTemplate { Name = "5 video/ngày · 05:00, 10:00, 15:00", Options = SampleOptions(5) };
+        data.Templates.AddRange([dupe, keep, other]);
+        var channel = new ChannelProfile { Name = "A", TemplateId = dupe.Id, Options = SampleOptions(3) };
+        data.Channels.Add(channel);
+
+        Assert.True(UploadTemplates.Consolidate(data));
+
+        Assert.Equal(2, data.Templates.Count);
+        Assert.Equal(keep.Id, channel.TemplateId);
+        Assert.Equal("Mafia", keep.Name);
+        Assert.StartsWith("Mẫu", other.Name, StringComparison.Ordinal);
+        Assert.False(UploadTemplates.Consolidate(data));
+    }
+
+    [Fact]
+    public void Template_SeedOnce_NeverLinksADetachedChannelAgain()
+    {
+        var data = new AppData { SettingsRevision = 3 };
+        var channel = new ChannelProfile { Name = "A", Options = SampleOptions(3) };
+        data.Channels.Add(channel);
+        data.Templates.Add(new UploadTemplate { Name = "Mẫu 1", Options = SampleOptions(3) });
+
+        Assert.False(UploadTemplates.SeedOnce(data));
+        Assert.Equal("", channel.TemplateId);
+    }
+
+    [Fact]
+    public void Defer_MovesOnlyOnceADay_ThenClearReleasesIt()
+    {
+        var channel = new ChannelProfile { Options = SampleOptions(3) };
+        channel.Options.TimeZoneId = "SE Asia Standard Time";
+        var now = new DateTimeOffset(2026, 11, 5, 9, 0, 0, TimeSpan.FromHours(7));
+        var publish = new DateTimeOffset(2026, 11, 6, 5, 0, 0, TimeSpan.FromHours(7));
+
+        Assert.True(ScheduleDefer.TryDefer(channel, publish, now));
+        Assert.Equal(new DateOnly(2026, 11, 7), channel.UploadDeferredTo);
+
+        var nextPublish = new DateTimeOffset(2026, 11, 7, 5, 0, 0, TimeSpan.FromHours(7));
+        Assert.False(ScheduleDefer.TryDefer(channel, nextPublish, now.AddHours(2)));
+        Assert.False(ScheduleDefer.TryDefer(channel, nextPublish, now.AddHours(3)));
+        Assert.Equal(new DateOnly(2026, 11, 7), channel.UploadDeferredTo);
+
+        ScheduleDefer.Clear(channel);
+        Assert.Null(channel.UploadDeferredTo);
+        var plan = SchedulePlanner.Plan(3, channel.Options, [], now, channel.UploadDeferredTo);
+        Assert.Equal(new DateOnly(2026, 11, 6), plan.TargetDay);
+    }
+
+    [Fact]
+    public void OneDayAhead_ADayAlreadyScheduled_IsNotReportedAsShortOfVideos()
+    {
+        var options = SampleOptions(3);
+        options.ExactDailyTimes = true;
+        options.TimeZoneId = "SE Asia Standard Time";
+        options.ScheduleStartDate = new DateOnly(2026, 11, 6);
+        var now = new DateTimeOffset(2026, 11, 5, 9, 0, 0, TimeSpan.FromHours(7));
+        var used = new[] { 5, 10, 15 }
+            .Select(hour => new DateTimeOffset(2026, 11, 6, hour, 0, 0, TimeSpan.FromHours(7)))
+            .ToArray();
+
+        var plan = SchedulePlanner.Plan(0, options, used, now);
+
+        Assert.True(plan.DayAlreadySet);
+        Assert.False(plan.ShortSource);
+        Assert.True(SchedulePlanner.TargetDayComplete(options, used, now));
+        Assert.False(SchedulePlanner.TargetDayComplete(options, used.Take(2).ToArray(), now));
     }
 
     [Fact]

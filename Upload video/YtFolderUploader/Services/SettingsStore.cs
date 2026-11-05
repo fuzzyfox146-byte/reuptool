@@ -33,7 +33,6 @@ public sealed class SettingsStore
         var data = Read<AppData>(SettingsPath, "cấu hình");
         Normalize(data);
         var changed = EnableSavedSources(data);
-        changed |= UploadTemplates.RepairNamedSchedules(data);
         changed |= UploadTemplates.SeedOnce(data);
         if (changed)
             Save(data);

@@ -24,10 +24,17 @@ public sealed class ChannelProfile
     public List<VideoSource> Sources { get; set; } = new();
     public string TemplateId { get; set; } = "";
     public DateOnly? UploadDeferredTo { get; set; }
+
+    /// <summary>Ngày thật (theo múi giờ kênh) mà lịch bị lùi. Một ngày thật chỉ được lùi một lần.</summary>
+    public DateOnly? UploadDeferredOn { get; set; }
     public UploadOptions Options { get; set; } = UploadOptions.CreateDefault();
 
     [JsonIgnore]
     public bool ShortSource { get; set; }
+
+    /// <summary>Kênh đã có lịch đăng cho ngày kế tiếp. Tên kênh hiện màu xanh.</summary>
+    [JsonIgnore]
+    public bool PostedNextDay { get; set; }
 
     [JsonIgnore]
     public bool DayAlreadySet { get; set; }
@@ -67,7 +74,20 @@ public sealed class UploadTemplate
     public string Key { get; set; } = "";
     public UploadOptions Options { get; set; } = UploadOptions.CreateDefault();
 
-    public override string ToString() => string.IsNullOrWhiteSpace(Name) ? "(mẫu chưa đặt tên)" : Name;
+    /// <summary>Mục đầu dropdown: kênh dùng cấu hình riêng, không chia sẻ với kênh khác.</summary>
+    public static readonly UploadTemplate None = new() { Id = "", Name = "— Riêng kênh này (không dùng mẫu chung) —" };
+
+    public override string ToString()
+    {
+        var name = string.IsNullOrWhiteSpace(Name) ? "(mẫu chưa đặt tên)" : Name;
+        if (Id.Length == 0)
+            return name;
+        var times = Options.TimeSlotsText
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return times.Length == 0
+            ? $"{name}  ·  {Options.VideosPerDay} video/ngày"
+            : $"{name}  ·  {Options.VideosPerDay} video/ngày: {string.Join(", ", times)}";
+    }
 }
 
 public sealed class UploadOptions

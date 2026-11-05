@@ -197,7 +197,7 @@ public sealed partial class MainForm
             }
         }
 
-        lstChannels.Invalidate();
+        RefreshPostedFlags();
     }
 
     void ClearChannelQueue()
@@ -391,16 +391,31 @@ public sealed partial class MainForm
         }
     }
 
-    bool AlreadyPostedTomorrow(ChannelProfile channel)
-    {
-        var used = _history.Entries
+    IEnumerable<DateTimeOffset> UsedTimes(ChannelProfile channel) =>
+        _history.Entries
             .Where(entry => entry.ChannelProfileId == channel.Id && entry.PublishAt != null && !string.IsNullOrWhiteSpace(entry.YoutubeVideoId))
             .Select(entry => entry.PublishAt!.Value)
             .Concat(_items
                 .Where(item => item.Channel.Id == channel.Id && item.PublishAt != null && !string.IsNullOrWhiteSpace(item.YoutubeVideoId))
                 .Select(item => item.PublishAt!.Value));
-        return channel.DayAlreadySet
-            || SchedulePlanner.HasUploadOnTargetDay(channel.Options, used, DateTimeOffset.Now, channel.UploadDeferredTo);
+
+    bool AlreadyPostedTomorrow(ChannelProfile channel) =>
+        channel.DayAlreadySet
+        || SchedulePlanner.HasUploadOnTargetDay(channel.Options, UsedTimes(channel), DateTimeOffset.Now, channel.UploadDeferredTo);
+
+    /// <summary>Tên kênh bên trái hiện xanh khi ngày kế tiếp đã lên lịch đủ video.</summary>
+    void RefreshPostedFlags()
+    {
+        var now = DateTimeOffset.Now;
+        foreach (var channel in _data.Channels)
+        {
+            channel.PostedNextDay = channel.Options.IsScheduled
+                && SchedulePlanner.TargetDayComplete(channel.Options, UsedTimes(channel), now, channel.UploadDeferredTo);
+            if (channel.PostedNextDay)
+                channel.ShortSource = false;
+        }
+
+        lstChannels.Invalidate();
     }
 
     void LogMissingDayChannels()
@@ -697,6 +712,8 @@ public sealed partial class MainForm
             Log($"Kết thúc lần chạy: {ok} video lên YouTube, {fail} lỗi.");
             if (exactRun)
                 RememberAutoDay(jobs);
+            RefreshPostedFlags();
+            UpdateDeferLabel();
         }
     }
 
@@ -1044,7 +1061,8 @@ public sealed partial class MainForm
 
     void DeferAfterThumbLimit(ChannelProfile channel, DateTimeOffset? publishAt)
     {
-        var day = ScheduleDefer.NextPublicDay(publishAt, channel.Options.TimeZoneId, DateTimeOffset.Now);
+        var now = DateTimeOffset.Now;
+        var movedThisChannel = false;
         foreach (var other in _data.Channels)
         {
             var sameProject = other.Id == channel.Id
@@ -1052,15 +1070,20 @@ public sealed partial class MainForm
                     && string.Equals(other.ClientId, channel.ClientId, StringComparison.Ordinal));
             if (!sameProject)
                 continue;
-            if (other.UploadDeferredTo == null || other.UploadDeferredTo < day)
-                other.UploadDeferredTo = day;
+            var moved = ScheduleDefer.TryDefer(other, publishAt, now);
+            if (other.Id == channel.Id)
+                movedThisChannel = moved;
         }
 
         _store.Save(_data);
+        var day = channel.UploadDeferredTo ?? ScheduleDefer.NextPublicDay(publishAt, channel.Options.TimeZoneId, now);
         var until = ScheduleDefer.StartOfDay(day, channel.Options.TimeZoneId);
         if (_autoNotBefore < until)
             _autoNotBefore = until;
-        Log($"{channel.Name}: hết hạn mức khi gắn thumbnail. Không đăng thêm. Lịch công khai chuyển sang {day:dd/MM}.");
+        Log(movedThisChannel
+            ? $"{channel.Name}: hết hạn mức khi gắn thumbnail. Không đăng thêm. Lịch công khai chuyển sang {day:dd/MM}."
+            : $"{channel.Name}: hôm nay đã lùi lịch sang {day:dd/MM} rồi, không lùi thêm. Muốn đổi ngày thì sửa Ngày bắt đầu hoặc bấm Bỏ lùi lịch.");
+        UpdateDeferLabel();
         AssignSchedules(includeBusy: true);
         BindGrid();
     }

@@ -2,6 +2,11 @@ namespace YtFolderUploader;
 
 public readonly record struct TemplateSync(UploadTemplate Template, bool Created);
 
+/// <summary>
+/// Mẫu đăng = một bộ cấu hình có tên cố định. Tên không tự đổi khi sửa giờ; dropdown hiện kèm giờ thật.
+/// Kênh có TemplateId rỗng là "Riêng kênh này": không bao giờ tự gắn hay tự tạo mẫu.
+/// Ngày bắt đầu, ngày ghi hình và playlist là của riêng từng kênh nên không đi theo mẫu.
+/// </summary>
 public static class UploadTemplates
 {
     public static string KeyOf(UploadOptions options)
@@ -13,8 +18,25 @@ public static class UploadTemplates
         copy.Tags = copy.Tags.Trim();
         copy.LocalizationTitle = copy.LocalizationTitle.Trim();
         copy.LocalizationDescription = NormalizeLines(copy.LocalizationDescription);
-        copy.PlaylistId = copy.PlaylistId.Trim();
+        // Các mục riêng từng kênh không được làm hai mẫu giống hệt trông như khác nhau.
+        copy.PlaylistId = "";
+        copy.ScheduleStartDate = default;
+        copy.RecordingDate = default;
         return System.Text.Json.JsonSerializer.Serialize(copy, SettingsStore.JsonOptions);
+    }
+
+    /// <summary>Bản sao cấu hình mẫu, giữ lại các mục riêng của kênh đích.</summary>
+    public static UploadOptions CloneFor(UploadOptions shared, UploadOptions? channelOwn)
+    {
+        var copy = shared.Clone();
+        if (channelOwn != null)
+        {
+            copy.ScheduleStartDate = channelOwn.ScheduleStartDate;
+            copy.RecordingDate = channelOwn.RecordingDate;
+            copy.PlaylistId = channelOwn.PlaylistId;
+        }
+
+        return copy;
     }
 
     public static TemplateSync Sync(AppData data, ChannelProfile channel)
@@ -31,7 +53,7 @@ public static class UploadTemplates
         var created = new UploadTemplate
         {
             Id = Guid.NewGuid().ToString("N"),
-            Name = NextName(data, channel.Options),
+            Name = DefaultName(data),
             Key = key,
             Options = channel.Options.Clone()
         };
@@ -40,16 +62,18 @@ public static class UploadTemplates
         return new TemplateSync(created, true);
     }
 
+    /// <summary>Lưu cấu hình đang sửa vào đúng mẫu của kênh và đổ sang các kênh dùng chung mẫu. Không đổi tên mẫu.</summary>
     public static void SaveInto(AppData data, ChannelProfile channel, Func<ChannelProfile, bool>? skip = null)
     {
         data.Templates ??= new();
+        if (string.IsNullOrEmpty(channel.TemplateId))
+            return;
         var template = data.Templates.FirstOrDefault(item => item.Id == channel.TemplateId);
-        if (template == null || template.NameIsCustom)
+        if (template == null)
             return;
 
         template.Options = channel.Options.Clone();
         template.Key = KeyOf(template.Options);
-        template.Name = UniqueName(data, template.Options, template.Id);
 
         foreach (var other in data.Channels)
         {
@@ -57,11 +81,11 @@ public static class UploadTemplates
                 continue;
             if (skip != null && skip(other))
                 continue;
-            other.Options = template.Options.Clone();
+            other.Options = CloneFor(template.Options, other.Options);
         }
     }
 
-    public static UploadTemplate AddCopy(AppData data, ChannelProfile channel)
+    public static UploadTemplate AddCopy(AppData data, ChannelProfile channel, string? name = null)
     {
         data.Templates ??= new();
         var created = new UploadTemplate
@@ -70,60 +94,80 @@ public static class UploadTemplates
             Options = channel.Options.Clone()
         };
         created.Key = KeyOf(created.Options);
-        created.Name = UniqueName(data, created.Options, created.Id);
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            created.Name = DefaultName(data);
+        }
+        else
+        {
+            created.Name = UniqueName(data, name.Trim());
+            created.NameIsCustom = true;
+        }
+
         data.Templates.Add(created);
         channel.TemplateId = created.Id;
         return created;
     }
 
+    /// <summary>Chạy một lần khi mở bản mới: gộp các mẫu trùng nhau và đặt lại tên theo kiểu "Mẫu N".</summary>
     public static bool SeedOnce(AppData data)
     {
-        if (data.SettingsRevision >= 2)
-            return LinkExisting(data);
-
-        EnsureMissing(data);
-        data.SettingsRevision = 2;
-        return true;
-    }
-
-    public static bool LinkExisting(AppData data)
-    {
-        data.Templates ??= new();
         var changed = false;
-        foreach (var channel in data.Channels)
+        if (data.SettingsRevision < 2)
         {
-            if (data.Templates.Any(template => template.Id == channel.TemplateId))
-                continue;
-            var match = data.Templates.FirstOrDefault(template => template.Key == KeyOf(channel.Options));
-            if (match == null)
-                continue;
-            channel.TemplateId = match.Id;
+            EnsureMissing(data);
+            data.SettingsRevision = 2;
+            changed = true;
+        }
+
+        if (data.SettingsRevision < 3)
+        {
+            Consolidate(data);
+            data.SettingsRevision = 3;
             changed = true;
         }
 
         return changed;
     }
 
-    public static bool RepairNamedSchedules(AppData data)
+    /// <summary>
+    /// Gộp các mẫu có cấu hình giống hệt (bỏ qua ngày và playlist riêng từng kênh) thành một.
+    /// Mẫu có tên tự đặt được giữ lại. Kênh trỏ vào mẫu bị gộp được nối sang mẫu giữ lại.
+    /// </summary>
+    public static bool Consolidate(AppData data)
     {
         data.Templates ??= new();
         var changed = false;
         foreach (var template in data.Templates)
-        {
-            if (!TryReadScheduleName(template.Name, out var perDay, out var times))
-                continue;
-            var wanted = string.Join("\n", times);
-            var stored = NormalizeLines(template.Options.TimeSlotsText);
-            if (template.Options.VideosPerDay == perDay && stored == wanted)
-                continue;
-            template.Options.VideosPerDay = perDay;
-            template.Options.TimeSlotsText = string.Join("\r\n", times);
             template.Key = KeyOf(template.Options);
+
+        var groups = data.Templates.GroupBy(template => template.Key).Where(group => group.Count() > 1).ToList();
+        foreach (var group in groups)
+        {
+            var keep = group.FirstOrDefault(template => template.NameIsCustom && !IsAutoScheduleName(template.Name))
+                ?? group.First();
+            foreach (var duplicate in group.Where(template => !ReferenceEquals(template, keep)).ToList())
+            {
+                foreach (var channel in data.Channels.Where(channel => channel.TemplateId == duplicate.Id))
+                    channel.TemplateId = keep.Id;
+                data.Templates.Remove(duplicate);
+                changed = true;
+            }
+        }
+
+        foreach (var template in data.Templates.ToList())
+        {
+            if (!IsAutoScheduleName(template.Name))
+                continue;
+            template.Name = DefaultName(data);
+            template.NameIsCustom = false;
             changed = true;
         }
 
         return changed;
     }
+
+    public static bool IsAutoScheduleName(string name) => TryReadScheduleName(name, out _, out _);
 
     public static bool TryReadScheduleName(string name, out int perDay, out string[] times)
     {
@@ -154,30 +198,31 @@ public static class UploadTemplates
         return changed;
     }
 
+    /// <summary>Dùng mẫu cho kênh. Giữ ngày bắt đầu, ngày ghi hình và playlist của kênh.</summary>
     public static void Apply(ChannelProfile channel, UploadTemplate template)
     {
-        channel.Options = template.Options.Clone();
+        channel.Options = CloneFor(template.Options, channel.Options);
         channel.TemplateId = template.Id;
     }
 
-    static string NextName(AppData data, UploadOptions options)
+    /// <summary>Bỏ liên kết mẫu. Kênh giữ nguyên cấu hình hiện tại và không còn đi theo mẫu nào.</summary>
+    public static void Detach(ChannelProfile channel) => channel.TemplateId = "";
+
+    static string DefaultName(AppData data)
     {
-        return UniqueName(data, options, null);
+        var n = data.Templates.Count + 1;
+        while (Taken(data, $"Mẫu {n}", null))
+            n++;
+        return $"Mẫu {n}";
     }
 
-    static string UniqueName(AppData data, UploadOptions options, string? exceptId)
+    static string UniqueName(AppData data, string baseName)
     {
-        var times = options.TimeSlotsText
-            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var clock = times.Length == 0 ? "không giờ" : string.Join(", ", times);
-        var baseName = $"{options.VideosPerDay} video/ngày · {clock}";
-        if (baseName.Length > 80)
-            baseName = baseName[..77] + "...";
-        if (!Taken(data, baseName, exceptId))
+        if (!Taken(data, baseName, null))
             return baseName;
 
         var n = 2;
-        while (Taken(data, $"{baseName} ({n})", exceptId))
+        while (Taken(data, $"{baseName} ({n})", null))
             n++;
         return $"{baseName} ({n})";
     }

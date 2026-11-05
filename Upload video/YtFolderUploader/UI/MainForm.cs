@@ -79,6 +79,8 @@ public sealed partial class MainForm : Form
     ComboBox cboTemplate = null!;
     TextBox txtTemplateName = null!;
     Label lblTemplateHint = null!;
+    Label lblDefer = null!;
+    Button btnClearDefer = null!;
     DataGridView grid = null!;
     NumericUpDown numBatch = null!;
     Button btnScanOne = null!;
@@ -101,6 +103,7 @@ public sealed partial class MainForm : Form
         BuildUi();
         numBatch.Value = Math.Clamp(_data.MaxUploadsPerRun, (int)numBatch.Minimum, (int)numBatch.Maximum);
         RefreshChannelList(_data.Channels.FirstOrDefault()?.Id);
+        RefreshPostedFlags();
         Shown += (_, _) =>
         {
             RefreshPreview();
@@ -259,8 +262,13 @@ public sealed partial class MainForm : Form
         var selected = (e.State & DrawItemState.Selected) != 0;
         using var back = new SolidBrush(selected ? DarkTheme.Select : lstChannels.BackColor);
         e.Graphics.FillRectangle(back, e.Bounds);
-        var text = channel.ShortSource ? channel + "   thiếu video" : channel.ToString();
-        var color = channel.ShortSource ? DarkTheme.Bad : DarkTheme.Text;
+        var template = _data.Templates.FirstOrDefault(item => item.Id == channel.TemplateId);
+        var text = $"{channel}   [{template?.Name ?? "riêng"}]";
+        if (channel.PostedNextDay)
+            text += "   ✓ đã lên lịch";
+        else if (channel.ShortSource)
+            text += "   thiếu video";
+        var color = channel.PostedNextDay ? DarkTheme.Ok : channel.ShortSource ? DarkTheme.Bad : DarkTheme.Text;
         var textRect = new Rectangle(e.Bounds.X + 8, e.Bounds.Y, Math.Max(0, e.Bounds.Width - 12), e.Bounds.Height);
         TextRenderer.DrawText(e.Graphics, text, e.Font ?? Font, textRect, color, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.Left);
     }
@@ -504,10 +512,10 @@ public sealed partial class MainForm : Form
     {
         var page = new TabPage("Tùy chọn đăng");
         var stack = new FormStack();
-        stack.AddLabel("Mẫu dùng chung. Đổi giờ rồi bấm Lưu hoặc Ctrl+S thì sửa đúng mẫu đang chọn, mọi kênh dùng mẫu đó đổi theo. Muốn bộ giờ khác: bấm Thêm mẫu trước, rồi mới đổi giờ.");
+        stack.AddLabel("Mẫu đăng của KÊNH ĐANG CHỌN (kênh bên trái). Chọn \"Riêng kênh này\" nếu kênh cần giờ khác hẳn, không ảnh hưởng kênh nào. Chọn một mẫu thì mọi kênh cùng mẫu đổi giờ theo khi bấm Lưu / Ctrl+S.");
         cboTemplate = stack.Add(new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList }, 28);
         cboTemplate.SelectedIndexChanged += (_, _) => ApplySelectedTemplate();
-        stack.AddLabel("Tên mẫu. Gõ tên riêng thì đổi giờ không đổi tên.");
+        stack.AddLabel("Tên mẫu (gõ tên rồi bấm ra ngoài ô để đổi). Tên không tự đổi khi sửa giờ.");
         txtTemplateName = stack.Add(new TextBox(), 28);
         txtTemplateName.Leave += (_, _) => RenameTemplate();
         var templateRow = new FlowLayoutPanel { Height = 72, WrapContents = true };
@@ -548,7 +556,16 @@ public sealed partial class MainForm : Form
         dtpStart = stack.Add(new DateTimePicker { Format = DateTimePickerFormat.Short }, 28);
         dtpStart.MinDate = DateTime.Today.AddDays(-1);
         dtpStart.MaxDate = DateTime.Today.AddYears(2);
-        dtpStart.ValueChanged += OnEdited;
+        dtpStart.ValueChanged += (sender, e) =>
+        {
+            OnEdited(sender, e);
+            if (Loading || _current == null)
+                return;
+            AssignSchedules();
+            BindGrid();
+        };
+        lblDefer = stack.AddLabel("Lịch không bị lùi.");
+        btnClearDefer = stack.Add(MakeButton("Bỏ lùi lịch, dùng đúng ngày đã chọn", ClearDefer), 34);
         stack.AddLabel("Múi giờ của giờ công khai");
         cboTimeZone = stack.Add(new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList }, 28);
         foreach (var (id, label) in TimeZones.Choices)
@@ -876,7 +893,9 @@ public sealed partial class MainForm : Form
             start = dtpStart.MinDate;
         if (start > dtpStart.MaxDate)
             start = dtpStart.MaxDate;
+        options.ScheduleStartDate = DateOnly.FromDateTime(start);
         dtpStart.Value = start;
+        UpdateDeferLabel();
         SelectCode(cboTimeZone, options.TimeZoneId);
         SelectCode(cboPrivacy, options.PrivacyMode);
         txtDescription.Text = options.DescriptionTemplate;
@@ -915,7 +934,20 @@ public sealed partial class MainForm : Form
         var options = _current.Options;
         options.VideosPerDay = (int)numPerDay.Value;
         options.TimeSlotsText = txtTimes.Text;
-        options.ScheduleStartDate = DateOnly.FromDateTime(dtpStart.Value);
+        var chosenStart = DateOnly.FromDateTime(dtpStart.Value);
+        if (options.ScheduleStartDate != chosenStart)
+        {
+            options.ScheduleStartDate = chosenStart;
+            if (_current.UploadDeferredTo != null)
+            {
+                ScheduleDefer.Clear(_current);
+                _store.Save(_data);
+                Log($"{_current.Name}: đã đổi ngày bắt đầu sang {chosenStart:dd/MM/yyyy}, bỏ lịch bị lùi trước đó.");
+            }
+
+            UpdateDeferLabel();
+        }
+
         options.TimeZoneId = SelectedCode(cboTimeZone, "SE Asia Standard Time");
         options.PrivacyMode = SelectedCode(cboPrivacy, "scheduled");
         options.DescriptionTemplate = txtDescription.Text;
@@ -943,25 +975,61 @@ public sealed partial class MainForm : Form
         UpdateTemplateHint();
     }
 
+    void UpdateDeferLabel()
+    {
+        if (lblDefer == null || btnClearDefer == null)
+            return;
+        var until = _current?.UploadDeferredTo;
+        var active = false;
+        if (_current != null && until != null)
+        {
+            var today = ScheduleDefer.Today(_current.Options.TimeZoneId, DateTimeOffset.Now);
+            active = until.Value > today.AddDays(1);
+        }
+
+        lblDefer.Text = active
+            ? $"Lịch đang bị lùi tới {until:dd/MM/yyyy} (do hết hạn mức hoặc lỗi gắn thumbnail). Bấm nút dưới để bỏ lùi, hoặc đổi Ngày bắt đầu ở trên."
+            : "Lịch không bị lùi.";
+        btnClearDefer.Enabled = active && _current != null && !IsBusy(_current);
+    }
+
+    void ClearDefer()
+    {
+        if (_current == null || IsBusy(_current))
+            return;
+        ScheduleDefer.Clear(_current);
+        _store.Save(_data);
+        UpdateDeferLabel();
+        AssignSchedules();
+        BindGrid();
+        Log($"{_current.Name}: đã bỏ lùi lịch. Ngày xếp lịch tính lại từ ngày bắt đầu đã chọn.");
+    }
+
     void BindTemplates()
     {
         BeginLoad();
         cboTemplate.Items.Clear();
+        cboTemplate.Items.Add(UploadTemplate.None);
         foreach (var template in _data.Templates)
             cboTemplate.Items.Add(template);
-        UploadTemplate? selected = null;
-        if (_current != null)
-        {
-            selected = _data.Templates.FirstOrDefault(template => template.Id == _current.TemplateId)
-                ?? _data.Templates.FirstOrDefault(template => template.Key == UploadTemplates.KeyOf(_current.Options));
-            if (selected != null)
-                _current.TemplateId = selected.Id;
-        }
+        var selected = _current == null
+            ? UploadTemplate.None
+            : _data.Templates.FirstOrDefault(template => template.Id == _current.TemplateId) ?? UploadTemplate.None;
+        if (_current != null && selected.Id != _current.TemplateId)
+            _current.TemplateId = selected.Id;
 
         cboTemplate.SelectedItem = selected;
-        txtTemplateName.Text = selected?.Name ?? "";
+        ShowTemplateName(selected);
         EndLoad();
         UpdateTemplateHint();
+        lstChannels?.Invalidate();
+    }
+
+    void ShowTemplateName(UploadTemplate selected)
+    {
+        var real = selected.Id.Length > 0;
+        txtTemplateName.Enabled = real && _current != null && !IsBusy(_current);
+        txtTemplateName.Text = real ? selected.Name : "";
     }
 
     void UpdateTemplateHint()
@@ -974,17 +1042,19 @@ public sealed partial class MainForm : Form
             return;
         }
 
-        var match = _data.Templates.FirstOrDefault(template => template.Key == UploadTemplates.KeyOf(_current.Options));
-        if (match == null)
+        var linked = _data.Templates.FirstOrDefault(template => template.Id == _current.TemplateId);
+        if (linked == null)
         {
-            var linked = _data.Templates.FirstOrDefault(template => template.Id == _current.TemplateId);
-            lblTemplateHint.Text = linked == null
-                ? "Kênh này chưa gắn mẫu. Chọn một mẫu rồi bấm Dùng mẫu này."
-                : "Bên dưới đang khác mẫu đang chọn. Bấm Dùng mẫu này để đổ số video, giờ và các mục còn lại.";
+            lblTemplateHint.Text = "Kênh này dùng cấu hình riêng. Sửa giờ bên dưới chỉ ảnh hưởng kênh này, không đổi kênh khác.";
             return;
         }
 
-        lblTemplateHint.Text = $"Bên dưới đang khớp mẫu \"{match.Name}\".";
+        var users = _data.Channels.Where(channel => channel.TemplateId == linked.Id).Select(channel => channel.Name).ToList();
+        var names = string.Join(", ", users.Take(5)) + (users.Count > 5 ? "…" : "");
+        var shared = $"{users.Count} kênh dùng mẫu này: {names}.";
+        lblTemplateHint.Text = linked.Key == UploadTemplates.KeyOf(_current.Options)
+            ? $"Đang dùng mẫu \"{linked.Name}\". {shared} Sửa giờ rồi bấm Lưu thì các kênh này đổi theo."
+            : $"Đang sửa khác mẫu \"{linked.Name}\". Bấm Lưu để cập nhật mẫu cho {shared} Hoặc bấm Dùng mẫu này để bỏ thay đổi.";
     }
 
     void AddTemplate()
@@ -995,28 +1065,28 @@ public sealed partial class MainForm : Form
         var created = UploadTemplates.AddCopy(_data, _current);
         _store.Save(_data);
         BindTemplates();
-        Log($"Đã thêm mẫu \"{created.Name}\" cho {_current.Name}. Mẫu cũ giữ nguyên. Đổi giờ rồi lưu thì chỉ mẫu mới đổi.");
+        Log($"Đã tạo mẫu \"{created.Name}\" từ cấu hình của {_current.Name}. Chỉ kênh này chuyển sang mẫu mới, kênh khác vẫn dùng mẫu cũ. Gõ tên mẫu rồi sửa giờ và bấm Lưu.");
+        if (txtTemplateName.Enabled)
+        {
+            txtTemplateName.Focus();
+            txtTemplateName.SelectAll();
+        }
     }
 
     void DeleteTemplate()
     {
-        if (cboTemplate.SelectedItem is not UploadTemplate selected)
+        if (cboTemplate.SelectedItem is not UploadTemplate selected || selected.Id.Length == 0)
             return;
-        if (_data.Templates.Count <= 1)
-        {
-            MessageBox.Show(this, "Còn một mẫu. Hãy thêm mẫu khác trước khi xóa mẫu này.", "Xóa mẫu");
-            return;
-        }
 
         var users = _data.Channels.Count(channel => channel.TemplateId == selected.Id);
-        if (MessageBox.Show(this, $"Xóa mẫu \"{selected.Name}\"? {users} kênh đang dùng sẽ bỏ liên kết mẫu này.", "Xóa mẫu", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+        if (MessageBox.Show(this, $"Xóa mẫu \"{selected.Name}\"? {users} kênh đang dùng sẽ chuyển sang \"Riêng kênh này\" và giữ nguyên cấu hình hiện tại.", "Xóa mẫu", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
             return;
 
         _data.Templates.Remove(selected);
         foreach (var channel in _data.Channels)
         {
             if (channel.TemplateId == selected.Id)
-                channel.TemplateId = "";
+                UploadTemplates.Detach(channel);
         }
 
         _store.Save(_data);
@@ -1026,11 +1096,20 @@ public sealed partial class MainForm : Form
 
     void RenameTemplate()
     {
-        if (Loading || _current == null || cboTemplate.SelectedItem is not UploadTemplate selected)
+        if (Loading || _current == null || cboTemplate.SelectedItem is not UploadTemplate selected || selected.Id.Length == 0)
             return;
         var name = txtTemplateName.Text.Trim();
         if (name.Length == 0 || name == selected.Name)
             return;
+        if (_data.Templates.Any(template => !ReferenceEquals(template, selected) && template.Name == name))
+        {
+            MessageBox.Show(this, $"Đã có mẫu tên \"{name}\". Hãy đặt tên khác để khỏi nhầm.", "Đổi tên mẫu");
+            BeginLoad();
+            txtTemplateName.Text = selected.Name;
+            EndLoad();
+            return;
+        }
+
         selected.Name = name;
         selected.NameIsCustom = true;
         _store.Save(_data);
@@ -1043,20 +1122,38 @@ public sealed partial class MainForm : Form
         if (Loading || _current == null || cboTemplate.SelectedItem is not UploadTemplate template)
             return;
 
+        if (template.Id.Length == 0)
+        {
+            if (_current.TemplateId.Length == 0)
+                return;
+            UploadTemplates.Detach(_current);
+            _store.Save(_data);
+            BeginLoad();
+            ShowTemplateName(UploadTemplate.None);
+            EndLoad();
+            UpdateTemplateHint();
+            lstChannels.Invalidate();
+            Log($"{_current.Name} dùng cấu hình riêng, không đi theo mẫu nào. Giờ đang có được giữ nguyên.");
+            return;
+        }
+
         UploadTemplates.Apply(_current, template);
         BeginLoad();
         ReadOptions(_current);
+        ShowTemplateName(template);
         EndLoad();
+        UpdateTemplateHint();
+        lstChannels.Invalidate();
         _store.Save(_data);
         RefreshQueueFromSettings();
         var times = template.Options.TimeSlotsText
             .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        Log($"Đã áp mẫu \"{template.Name}\" cho {_current.Name}: {template.Options.VideosPerDay} video/ngày, giờ {string.Join(", ", times)}.");
+        Log($"Đã áp mẫu \"{template.Name}\" cho {_current.Name}: {template.Options.VideosPerDay} video/ngày, giờ {string.Join(", ", times)}. Ngày bắt đầu và playlist của kênh được giữ nguyên.");
     }
 
     void SaveCurrentTemplate(bool announce)
     {
-        if (_current == null)
+        if (_current == null || string.IsNullOrEmpty(_current.TemplateId))
             return;
         var template = _data.Templates.FirstOrDefault(item => item.Id == _current.TemplateId);
         if (template == null)
@@ -1065,7 +1162,10 @@ public sealed partial class MainForm : Form
         UploadTemplates.SaveInto(_data, _current, channel => _busyChannelIds.Contains(channel.Id));
         BindTemplates();
         if (announce && before != template.Key)
-            Log($"Đã cập nhật mẫu \"{template.Name}\". Mọi kênh đang dùng mẫu này đổi theo.");
+        {
+            var others = _data.Channels.Count(channel => channel.TemplateId == template.Id && !ReferenceEquals(channel, _current));
+            Log($"Đã cập nhật mẫu \"{template.Name}\"" + (others > 0 ? $". {others} kênh khác dùng mẫu này đã đổi theo." : "."));
+        }
     }
 
     void BindCategories()
@@ -1249,6 +1349,7 @@ public sealed partial class MainForm : Form
             TemplateId = _current?.TemplateId ?? "",
             Options = _current?.Options.Clone() ?? UploadOptions.CreateDefault()
         };
+        channel.Options.PlaylistId = "";
         _data.Channels.Add(channel);
         RefreshChannelList(channel.Id);
         _store.Save(_data);

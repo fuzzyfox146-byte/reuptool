@@ -78,6 +78,33 @@ public static class SchedulePlanner
         return used.Any(time => DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(time, zone).DateTime) == day);
     }
 
+    /// <summary>Số giờ đăng một ngày thật sự dùng: số video/ngày nhưng không quá số giờ đã nhập.</summary>
+    public static int DaySize(UploadOptions options)
+    {
+        var slots = Parse(options.TimeSlotsText).Distinct().Count();
+        return slots == 0 ? 0 : Math.Clamp(options.VideosPerDay, 1, slots);
+    }
+
+    /// <summary>Ngày đích đã có đủ video lên lịch (đủ số giờ trong ngày) thì mới coi là đăng xong.</summary>
+    public static bool TargetDayComplete(
+        UploadOptions options,
+        IEnumerable<DateTimeOffset> used,
+        DateTimeOffset now,
+        DateOnly? notBefore = null)
+    {
+        var size = DaySize(options);
+        if (size == 0)
+            return false;
+        var day = TargetDay(options, now, notBefore);
+        var zone = TimeZones.Resolve(options.TimeZoneId);
+        var onDay = used
+            .Where(time => DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(time, zone).DateTime) == day)
+            .Select(Key)
+            .Distinct()
+            .Count();
+        return onDay >= size;
+    }
+
     public static SchedulePlan PlanOneDayAhead(
         int count,
         UploadOptions options,
@@ -103,15 +130,7 @@ public static class SchedulePlanner
         if (options.VideosPerDay > slots.Count)
             plan.Warning = $"Đã nhập {slots.Count} giờ, nên một ngày đăng {slots.Count} video.";
 
-        if (count < daySlots.Count)
-        {
-            plan.ShortSource = true;
-            plan.Warning = $"Ngày {day:dd/MM} cần {daySlots.Count} video, chỉ còn {count}. Không đăng ngày thiếu.";
-            return plan;
-        }
-
         var usedKeys = new HashSet<long>(used.Select(Key));
-        var times = new List<DateTimeOffset>();
         foreach (var slot in daySlots)
         {
             var local = day.ToDateTime(slot);
@@ -119,11 +138,23 @@ public static class SchedulePlanner
             if (usedKeys.Contains(Key(when)))
             {
                 plan.DayAlreadySet = true;
-                plan.Times.Clear();
                 plan.Warning = $"Ngày {day:dd/MM} đã có lịch. Không đăng thêm.";
                 return plan;
             }
+        }
 
+        if (count < daySlots.Count)
+        {
+            plan.ShortSource = true;
+            plan.Warning = $"Ngày {day:dd/MM} cần {daySlots.Count} video, chỉ còn {count}. Không đăng ngày thiếu.";
+            return plan;
+        }
+
+        var times = new List<DateTimeOffset>();
+        foreach (var slot in daySlots)
+        {
+            var local = day.ToDateTime(slot);
+            var when = new DateTimeOffset(local, zone.GetUtcOffset(local));
             if (when < now + MinimumLead)
             {
                 plan.Warning = $"Giờ {slot:HH:mm} ngày {day:dd/MM} đã quá gần. Không đăng ngày này.";
