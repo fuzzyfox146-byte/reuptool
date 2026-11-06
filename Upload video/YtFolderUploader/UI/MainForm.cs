@@ -63,6 +63,7 @@ public sealed partial class MainForm : Form
     ComboBox cboLicense = null!;
     CheckBox chkExactDays = null!;
     CheckBox chkDeleteAfter = null!;
+    CheckBox chkCheckThumbBeforeUpload = null!;
     CheckBox chkKids = null!;
     System.Windows.Forms.Timer? _autoTimer;
     bool _autoDaily;
@@ -567,6 +568,18 @@ public sealed partial class MainForm : Form
             _current.Options.DeleteSourceAfterUpload = chkDeleteAfter.Checked;
         };
 
+        chkCheckThumbBeforeUpload = stack.Add(new CheckBox
+        {
+            Text = "Thử gắn thumbnail vào video cũ trước khi upload (kiểm tra hạn mức). Bỏ chọn để đăng thẳng và gắn thumbnail trực tiếp cho video mới.",
+            Checked = false
+        }, 40);
+        chkCheckThumbBeforeUpload.CheckedChanged += (_, _) =>
+        {
+            if (Loading || _current == null)
+                return;
+            _current.Options.CheckThumbBeforeUpload = chkCheckThumbBeforeUpload.Checked;
+        };
+
         stack.AddLabel("Ngày bắt đầu xếp lịch:");
         dtpStart = stack.Add(new DateTimePicker { Format = DateTimePickerFormat.Short }, 28);
         dtpStart.MinDate = DateTime.Today.AddDays(-1);
@@ -899,6 +912,7 @@ public sealed partial class MainForm : Form
         txtTimes.Text = options.TimeSlotsText;
         ApplyCheck(chkExactDays, true, options.ExactDailyTimes);
         ApplyCheck(chkDeleteAfter, true, options.DeleteSourceAfterUpload);
+        ApplyCheck(chkCheckThumbBeforeUpload, true, options.CheckThumbBeforeUpload);
         var start = options.ScheduleStartDate.ToDateTime(TimeOnly.MinValue);
         if (start < dtpStart.MinDate)
             start = dtpStart.MinDate;
@@ -983,6 +997,9 @@ public sealed partial class MainForm : Form
         options.RecordingDate = DateOnly.FromDateTime(dtpRecording.Value);
         options.License = SelectedCode(cboLicense, "youtube");
         options.PlaylistId = txtPlaylist.Text.Trim();
+        options.ExactDailyTimes = chkExactDays.Checked;
+        options.DeleteSourceAfterUpload = chkDeleteAfter.Checked;
+        options.CheckThumbBeforeUpload = chkCheckThumbBeforeUpload.Checked;
         UpdateTemplateHint();
     }
 

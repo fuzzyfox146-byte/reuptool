@@ -590,7 +590,9 @@ public sealed partial class MainForm
                         services[job.Channel.Id] = service;
                     }
 
-                    if (thumbChecked.Add(job.Channel.Id) && FindThumbProbe(job.Channel) is { } probe)
+                    if (job.Channel.Options.CheckThumbBeforeUpload
+                        && thumbChecked.Add(job.Channel.Id)
+                        && FindThumbProbe(job.Channel) is { } probe)
                     {
                         Log($"{job.Channel.Name}: kiểm tra gắn thumbnail trước khi đăng.");
                         try
@@ -602,9 +604,19 @@ public sealed partial class MainForm
                         {
                             throw;
                         }
+                        catch (Exception ex) when (ApiErrors.Reason(ex) is "videoNotFound" or "notFound" || ex.ToString().Contains("videoNotFound", StringComparison.OrdinalIgnoreCase))
+                        {
+                            Log($"{job.Channel.Name}: video cũ để thử ({probe.VideoId}) không còn trên YouTube. Bỏ qua bước kiểm tra và tiếp tục đăng.");
+                            var dead = _history.Entries.FirstOrDefault(e => e.YoutubeVideoId == probe.VideoId);
+                            if (dead != null)
+                            {
+                                dead.ThumbPath = null;
+                                _store.SaveHistory(_history);
+                            }
+                        }
                         catch (Exception ex) when (ApiErrors.ShouldDeferAfterThumbFailure(ex))
                         {
-                            Log($"{job.Channel.Name}: không gắn được thumbnail. " + ApiErrors.Explain(ex));
+                            Log($"{job.Channel.Name}: không gắn được thumbnail do hết hạn mức. " + ApiErrors.Explain(ex));
                             DeferAfterThumbLimit(job.Channel, job.PublishAt);
                             blockedClients.Add(job.Channel.ClientId);
                             deferredClients.Add(job.Channel.ClientId);
@@ -612,7 +624,7 @@ public sealed partial class MainForm
                         }
                         catch (Exception ex)
                         {
-                            Log($"{job.Channel.Name}: ảnh thumbnail cũ không dùng để thử. " + ApiErrors.Explain(ex));
+                            Log($"{job.Channel.Name}: ảnh thumbnail cũ không dùng để thử được ({ApiErrors.Explain(ex)}). Tiếp tục đăng video.");
                         }
                     }
 

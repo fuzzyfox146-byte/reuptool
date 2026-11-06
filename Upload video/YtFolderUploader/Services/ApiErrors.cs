@@ -38,7 +38,19 @@ public static class ApiErrors
             return false;
         if (IsAuthFailure(exception))
             return false;
-        return true;
+
+        var reason = Reason(exception);
+        if (reason is "uploadRateLimitExceeded" or "quotaExceeded" or "uploadLimitExceeded" or "dailyLimitExceeded" or "rateLimitExceeded" or "userRateLimitExceeded")
+            return true;
+
+        if (reason is "videoNotFound" or "notFound")
+            return false;
+
+        var text = exception.ToString();
+        return text.Contains("uploadRateLimitExceeded", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("quotaExceeded", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("uploadLimitExceeded", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("dailyLimitExceeded", StringComparison.OrdinalIgnoreCase);
     }
 
     public static bool IsTransientThumbnail(Exception exception)

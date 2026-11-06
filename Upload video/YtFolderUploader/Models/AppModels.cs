@@ -122,6 +122,9 @@ public sealed class UploadOptions
     public bool ExactDailyTimes { get; set; } = true;
     public bool DeleteSourceAfterUpload { get; set; }
 
+    /// <summary>Thử gắn thumbnail vào video cũ trước khi upload để kiểm tra hạn mức thumbnail trong ngày. Tắt nếu muốn đăng thẳng và gắn thumbnail trực tiếp cho video mới.</summary>
+    public bool CheckThumbBeforeUpload { get; set; }
+
     [JsonIgnore]
     public bool IsScheduled => string.IsNullOrWhiteSpace(PrivacyMode) || PrivacyMode == "scheduled";
 
